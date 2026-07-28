@@ -42,6 +42,10 @@ public class MongoSourceClient {
         listener.start();
     }
 
+    public void pause() {
+        listener.pause();
+    }
+
     public void stop() {
         listener.stop();
     }

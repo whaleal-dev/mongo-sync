@@ -156,15 +156,7 @@ public abstract class AbstractSourceListener implements SourceListener {
     @Override
     public void stop() {
         if (stopped.compareAndSet(false, true)) {
-            running.set(false);
-            logOffsetSnapshot("stop");
-
-            shutdownExecutor(offsetLogScheduler);
-            shutdownExecutor(incrementalExecutor);
-            shutdownExecutor(coordinatorExecutor);
-            offsetLogScheduler = null;
-            incrementalExecutor = null;
-            coordinatorExecutor = null;
+            pauseInternal("stop");
 
             if (ownsMongoClient && mongoClient != null) {
                 try {
@@ -174,6 +166,26 @@ public abstract class AbstractSourceListener implements SourceListener {
                 mongoClient = null;
             }
         }
+    }
+
+    @Override
+    public void pause() {
+        if (stopped.get()) {
+            throw new IllegalStateException("CDC listener already stopped");
+        }
+        pauseInternal("pause");
+    }
+
+    private void pauseInternal(String reason) {
+        running.set(false);
+        logOffsetSnapshot(reason);
+
+        shutdownExecutor(offsetLogScheduler);
+        shutdownExecutor(incrementalExecutor);
+        shutdownExecutor(coordinatorExecutor);
+        offsetLogScheduler = null;
+        incrementalExecutor = null;
+        coordinatorExecutor = null;
     }
 
     private static void shutdownExecutor(ExecutorService executor) {

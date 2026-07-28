@@ -4,5 +4,7 @@ public interface SourceListener {
 
     void start();
 
+    void pause();
+
     void stop();
 }

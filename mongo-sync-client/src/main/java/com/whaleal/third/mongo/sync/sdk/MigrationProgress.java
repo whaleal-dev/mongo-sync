@@ -5,9 +5,12 @@ package com.whaleal.third.mongo.sync.sdk;
  */
 public final class MigrationProgress {
 
+    private final String namespace;
+    private final String phase;
     private final MigrationState state;
     private final boolean canCommit;
     private final boolean fullSyncComplete;
+    private final long estimatedTotalDocuments;
     private final long snapshotEvents;
     private final long incrementalEvents;
     private final long ddlEvents;
@@ -16,11 +19,15 @@ public final class MigrationProgress {
     private final Long lastEventTsMs;
     private final long startedAtMs;
     private final Long committedAtMs;
+    private final long elapsedMs;
     private final String detail;
 
-    public MigrationProgress(MigrationState state,
+    public MigrationProgress(String namespace,
+                             String phase,
+                             MigrationState state,
                              boolean canCommit,
                              boolean fullSyncComplete,
+                             long estimatedTotalDocuments,
                              long snapshotEvents,
                              long incrementalEvents,
                              long ddlEvents,
@@ -29,10 +36,14 @@ public final class MigrationProgress {
                              Long lastEventTsMs,
                              long startedAtMs,
                              Long committedAtMs,
+                             long elapsedMs,
                              String detail) {
+        this.namespace = namespace;
+        this.phase = phase;
         this.state = state;
         this.canCommit = canCommit;
         this.fullSyncComplete = fullSyncComplete;
+        this.estimatedTotalDocuments = estimatedTotalDocuments;
         this.snapshotEvents = snapshotEvents;
         this.incrementalEvents = incrementalEvents;
         this.ddlEvents = ddlEvents;
@@ -41,7 +52,16 @@ public final class MigrationProgress {
         this.lastEventTsMs = lastEventTsMs;
         this.startedAtMs = startedAtMs;
         this.committedAtMs = committedAtMs;
+        this.elapsedMs = elapsedMs;
         this.detail = detail;
+    }
+
+    public String getNamespace() {
+        return namespace;
+    }
+
+    public String getPhase() {
+        return phase;
     }
 
     public MigrationState getState() {
@@ -54,6 +74,10 @@ public final class MigrationProgress {
 
     public boolean isFullSyncComplete() {
         return fullSyncComplete;
+    }
+
+    public long getEstimatedTotalDocuments() {
+        return estimatedTotalDocuments;
     }
 
     public long getSnapshotEvents() {
@@ -88,16 +112,38 @@ public final class MigrationProgress {
         return committedAtMs;
     }
 
+    public long getElapsedMs() {
+        return elapsedMs;
+    }
+
     public String getDetail() {
         return detail;
+    }
+
+    public long getCopiedDocuments() {
+        return snapshotEvents;
+    }
+
+    public int getFullSyncPercent() {
+        if (estimatedTotalDocuments <= 0) {
+            return fullSyncComplete ? 100 : 0;
+        }
+        long percent = (snapshotEvents * 100L) / estimatedTotalDocuments;
+        if (fullSyncComplete && percent < 100L) {
+            return 100;
+        }
+        return (int) Math.max(0L, Math.min(100L, percent));
     }
 
     @Override
     public String toString() {
         return "MigrationProgress{"
-                + "state=" + state
+                + "namespace='" + namespace + '\''
+                + ", phase='" + phase + '\''
+                + ", state=" + state
                 + ", canCommit=" + canCommit
                 + ", fullSyncComplete=" + fullSyncComplete
+                + ", estimatedTotalDocuments=" + estimatedTotalDocuments
                 + ", snapshotEvents=" + snapshotEvents
                 + ", incrementalEvents=" + incrementalEvents
                 + ", ddlEvents=" + ddlEvents
@@ -106,6 +152,7 @@ public final class MigrationProgress {
                 + ", lastEventTsMs=" + lastEventTsMs
                 + ", startedAtMs=" + startedAtMs
                 + ", committedAtMs=" + committedAtMs
+                + ", elapsedMs=" + elapsedMs
                 + ", detail='" + detail + '\''
                 + '}';
     }

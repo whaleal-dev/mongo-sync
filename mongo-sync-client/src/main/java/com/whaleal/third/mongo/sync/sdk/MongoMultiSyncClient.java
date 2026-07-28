@@ -212,6 +212,19 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         close();
     }
 
+    public MigrationProgress pause() {
+        for (MongoSyncClient child : children) {
+            child.pause();
+        }
+        return progress();
+    }
+
+    public void resume() {
+        for (MongoSyncClient child : children) {
+            child.start();
+        }
+    }
+
     public List<NamespaceMapper.NsPair> getNamespaces() {
         return namespaces;
     }
@@ -238,6 +251,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         long incremental = 0;
         long ddl = 0;
         long inflight = 0;
+        long estimatedTotal = 0;
         long startedAt = 0;
         Long committedAt = null;
         Long lastEventTs = null;
@@ -251,6 +265,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             incremental += p.getIncrementalEvents();
             ddl += p.getDdlEvents();
             inflight += p.getInflightEvents();
+            estimatedTotal += p.getEstimatedTotalDocuments();
             shardSources += p.getShardSourceCount();
             if (!p.isFullSyncComplete()) {
                 fullComplete = false;
@@ -270,9 +285,12 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         }
 
         return new MigrationProgress(
+                "multi(" + children.size() + ")",
+                canCommit() ? "CAN_COMMIT" : String.valueOf(state),
                 canCommit() ? MigrationState.CAN_COMMIT : state,
                 canCommit(),
                 fullComplete,
+                estimatedTotal,
                 snapshot,
                 incremental,
                 ddl,
@@ -281,6 +299,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                 lastEventTs,
                 startedAt,
                 committedAt,
+                startedAt > 0 ? (System.currentTimeMillis() - startedAt) : 0,
                 "collections=" + children.size());
     }
 
@@ -348,6 +367,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         }
         if (left == MigrationState.COMMITTING || right == MigrationState.COMMITTING) {
             return MigrationState.COMMITTING;
+        }
+        if (left == MigrationState.PAUSED || right == MigrationState.PAUSED) {
+            return MigrationState.PAUSED;
         }
         if (left == MigrationState.COMMITTED && right == MigrationState.COMMITTED) {
             return MigrationState.COMMITTED;

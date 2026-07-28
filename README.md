@@ -8,8 +8,8 @@
 面向迁移、灾备、多活与跨架构搬迁：一套 API / 一条命令，完成 **全量 + 增量**、**DDL 跟随**、**多库表过滤** 与 **数据校验**。设计参考 d2t / MongoShake，并保持可嵌入 Java 业务进程的轻量形态。
 
 ```bash
-./bin/mongosync.sh conf/mongo-sync.properties   # 启动同步
-./bin/verify.sh    conf/mongo-verify.properties # 数据比对
+./bin/mongosync.sh -f conf/mongo-sync.properties   # 启动同步
+./bin/verify.sh    -f conf/mongo-verify.properties # 数据比对
 ```
 
 **QQ 交流群：`983986505`**（使用问题、需求反馈、经验交流欢迎加群）
@@ -69,17 +69,10 @@ chmod +x bin/*.sh
 # 编辑配置：源/目标 URI、库表或 namespace.white
 cp doc/examples/mongo-sync.example.properties my-sync.properties
 
-./bin/mongosync.sh my-sync.properties
+./bin/mongosync.sh -f my-sync.properties
 # Ctrl+C 优雅停止
 
-./bin/verify.sh doc/examples/mongo-verify.example.properties
-```
-
-可选打包 fat jar：
-
-```bash
-./bin/package.sh
-# → dist/lib/mongo-sync-all.jar + dist/conf/
+./bin/verify.sh -f doc/examples/mongo-verify.example.properties
 ```
 
 ### 2. 嵌入式 SDK
@@ -109,50 +102,6 @@ MongoMultiSyncClient multi = MongoMultiSyncClient.create(MongoMultiSyncConfig.bu
         .offsetStoreDir("./data/offsets")
         .writeErrorHandler((bucket, event, err) -> { }));
 multi.start();
-```
-
----
-
-## 模块结构
-
-```text
-mongo-sync/
-├── mongo-transfer-model/   通用传输模型（捕获无关）
-├── mongo-source-client/    Oplog / ChangeStream → TransferEvent
-├── mongo-sink-client/      TransferEvent / DdlEvent → 目标库
-├── mongo-sync-client/      编排：分桶 + Disruptor + 锁 → Sink
-├── bin/                    mongosync.sh / verify.sh / package.sh
-└── doc/                    架构说明、配置示例、oplog 样例
-```
-
-数据契约：
-
-| 模型 | 含义 |
-|------|------|
-| `TransferEvent` | 文档变更 `c` / `u` / `d` / `r` |
-| `DdlEvent` | 删库、删表、建删索引、建表、改名等 |
-
----
-
-## 构建与依赖
-
-```bash
-mvn clean install -DskipTests
-```
-
-| 组件 | 版本要求 |
-|------|----------|
-| JDK | **1.8+** |
-| Caffeine | **2.9.3**（勿用 3.x） |
-| Disruptor | **3.4.4**（勿用 4.x） |
-| mongodb-driver-sync | 4.11.1 |
-
-```xml
-<dependency>
-  <groupId>com.whaleal.third</groupId>
-  <artifactId>mongo-sync-client</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
-</dependency>
 ```
 
 ---
