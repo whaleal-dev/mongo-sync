@@ -7,6 +7,8 @@ import com.whaleal.third.mongo.sink.config.WriteMode;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.source.oplog.MongoVersion;
 import com.whaleal.third.mongo.source.spi.OplogOffsetStorage;
 import com.whaleal.third.mongo.source.spi.ResumeTokenStorage;
@@ -599,22 +601,26 @@ public class MongoSyncConfig {
 
         public MongoSyncConfig build() {
             if (c.sourceMongoClient == null && (c.sourceUri == null || c.sourceUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("sourceUri or sourceMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "sourceUri or sourceMongoClient is required");
             }
             if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("targetUri or targetMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "targetUri or targetMongoClient is required");
             }
             if (blank(c.sourceDatabase) || blank(c.sourceCollection)) {
-                throw new IllegalArgumentException("source database/collection is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "source database/collection is required");
             }
             if (blank(c.targetDatabase) || blank(c.targetCollection)) {
-                throw new IllegalArgumentException("target database/collection is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "target database/collection is required");
             }
             // OPLOG 的 mongoVersion 可运行时 buildInfo 探测；分片 URI 可在 AUTO/OPLOG 下使用或自动 listShards
             if (c.hasShardedOplogSources()
                     && c.captureMode != CaptureMode.OPLOG
                     && c.captureMode != CaptureMode.AUTO) {
-                throw new IllegalArgumentException(
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
                         "sourceOplogUris/Clients only supported when captureMode=OPLOG or AUTO");
             }
             return c;

@@ -15,6 +15,8 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.cache.SyncCaches;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.meta.CollectionStructureBootstrap;
 import com.whaleal.third.mongo.sync.offset.FileOffsetStoreFactory;
 import com.whaleal.third.mongo.sync.offset.MemoryOplogOffsetStorage;
@@ -429,9 +431,15 @@ public final class MongoSyncClient implements AutoCloseable {
 
     public void start() {
         if (stopped.get()) {
-            throw new IllegalStateException("sync client already stopped");
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "sync client already stopped");
         }
         if (paused.compareAndSet(true, false)) {
+            if (config.getSyncMode().includesFull() && !fullSyncComplete.get()) {
+                paused.set(true);
+                throw new MongoSyncException(MongoSyncErrorCode.RESUME_NOT_ALLOWED,
+                        "resume during initial full sync is not supported; restart migration or wait until full sync completes");
+            }
             migrationState.set(MigrationState.RUNNING);
             stateDetail.set("resuming");
             for (MongoSourceClient shard : shardOplogSources) {
@@ -481,17 +489,21 @@ public final class MongoSyncClient implements AutoCloseable {
 
     public synchronized MigrationProgress pause() {
         if (stopped.get()) {
-            throw new IllegalStateException("sync client already stopped");
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "sync client already stopped");
         }
         MigrationState current = migrationState.get();
         if (current == MigrationState.COMMITTED || current == MigrationState.COMMITTING) {
-            throw new IllegalStateException("cannot pause in state=" + current);
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "cannot pause in state=" + current);
+        }
+        if (started.get() && config.getSyncMode().includesFull() && !fullSyncComplete.get()) {
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "pause during initial full sync is blocked to avoid snapshot replay/duplication; wait until full sync completes");
         }
         if (!started.get()) {
-            migrationState.set(MigrationState.PAUSED);
-            paused.set(true);
-            stateDetail.set("paused");
-            return progress();
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "cannot pause before start; start the migration first");
         }
         if (!paused.compareAndSet(false, true)) {
             return progress();
@@ -526,9 +538,13 @@ public final class MongoSyncClient implements AutoCloseable {
         MigrationState state = migrationState.get();
         boolean canCommit = state == MigrationState.CAN_COMMIT || state == MigrationState.COMMITTED;
         long now = System.currentTimeMillis();
+        Long lagMs = computeLagMs(now);
         return new MigrationProgress(
                 config.sourceNs(),
                 phaseOf(state),
+                sourceTopology == null ? "UNKNOWN" : sourceTopology.name(),
+                resolvedCaptureMode == null ? "UNKNOWN" : resolvedCaptureMode.name(),
+                config.getSyncMode() == null ? "UNKNOWN" : config.getSyncMode().name(),
                 state,
                 canCommit,
                 fullSyncComplete.get(),
@@ -542,7 +558,10 @@ public final class MongoSyncClient implements AutoCloseable {
                 startedAtMs.get(),
                 committedAtMs.get(),
                 startedAtMs.get() > 0 ? (now - startedAtMs.get()) : 0,
-                stateDetail.get());
+                lagMs,
+                1,
+                stateDetail.get(),
+                commitReadinessOf(state));
     }
 
     /**
@@ -555,7 +574,10 @@ public final class MongoSyncClient implements AutoCloseable {
             return progress();
         }
         if (current != MigrationState.CAN_COMMIT) {
-            throw new IllegalStateException("cannot commit in state=" + current + ", progress=" + progress());
+            throw new MongoSyncException(MongoSyncErrorCode.COMMIT_NOT_ALLOWED,
+                    "cannot commit in state=" + current
+                            + ", readiness=" + commitReadinessOf(current)
+                            + ", progress=" + progress());
         }
         migrationState.set(MigrationState.COMMITTING);
         stateDetail.set("committing");
@@ -622,19 +644,33 @@ public final class MongoSyncClient implements AutoCloseable {
         migrationState.set(ready ? MigrationState.CAN_COMMIT : MigrationState.RUNNING);
         if (ready) {
             stateDetail.set("ready to commit");
+        } else {
+            stateDetail.set(commitReadinessOf(MigrationState.RUNNING));
         }
     }
 
-    private static String phaseOf(MigrationState state) {
+    private String phaseOf(MigrationState state) {
         switch (state) {
             case IDLE:
-                return "IDLE";
+                return "NOT_STARTED";
             case RUNNING:
+                if (config.getSyncMode().includesFull() && !fullSyncComplete.get()) {
+                    return "INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "CHANGE_EVENT_APPLY";
+                }
                 return "RUNNING";
             case PAUSED:
+                if (config.getSyncMode().includesFull() && !fullSyncComplete.get()) {
+                    return "PAUSED_INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "PAUSED_CHANGE_EVENT_APPLY";
+                }
                 return "PAUSED";
             case CAN_COMMIT:
-                return "CAN_COMMIT";
+                return "READY_TO_COMMIT";
             case COMMITTING:
                 return "COMMITTING";
             case COMMITTED:
@@ -646,6 +682,41 @@ public final class MongoSyncClient implements AutoCloseable {
             default:
                 return "UNKNOWN";
         }
+    }
+
+    private Long computeLagMs(long now) {
+        Long last = lastEventTsMs.get();
+        if (last == null || last.longValue() <= 0L) {
+            return null;
+        }
+        long lag = now - last.longValue();
+        return lag < 0L ? 0L : lag;
+    }
+
+    private String commitReadinessOf(MigrationState state) {
+        if (state == MigrationState.COMMITTED) {
+            return "already committed";
+        }
+        if (state == MigrationState.COMMITTING) {
+            return "commit in progress";
+        }
+        if (state == MigrationState.CAN_COMMIT) {
+            return "ready";
+        }
+        if (!started.get()) {
+            return "not started";
+        }
+        if (paused.get()) {
+            return "paused";
+        }
+        if (!fullSyncComplete.get()) {
+            return "waiting full sync completion";
+        }
+        long inflight = pipeline.inflight();
+        if (inflight > 0L) {
+            return "waiting inflight drain=" + inflight;
+        }
+        return "waiting incremental catch-up";
     }
 
     @Override

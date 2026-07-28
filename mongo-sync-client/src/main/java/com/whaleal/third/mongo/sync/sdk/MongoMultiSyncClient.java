@@ -8,6 +8,8 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.ns.CollectionDiscovery;
 import com.whaleal.third.mongo.sync.ns.NamespaceFilter;
 import com.whaleal.third.mongo.sync.ns.NamespaceMapper;
@@ -198,7 +200,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
 
     public void start() {
         if (stopped.get()) {
-            throw new IllegalStateException("multi-sync already stopped");
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "multi-sync already stopped");
         }
         if (!started.compareAndSet(false, true)) {
             return;
@@ -255,6 +258,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         long startedAt = 0;
         Long committedAt = null;
         Long lastEventTs = null;
+        Long lagMs = null;
         boolean fullComplete = true;
         int shardSources = 0;
 
@@ -282,11 +286,17 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                     && (lastEventTs == null || p.getLastEventTsMs() > lastEventTs.longValue())) {
                 lastEventTs = p.getLastEventTsMs();
             }
+            if (p.getLagMs() != null && (lagMs == null || p.getLagMs() > lagMs.longValue())) {
+                lagMs = p.getLagMs();
+            }
         }
 
         return new MigrationProgress(
                 "multi(" + children.size() + ")",
-                canCommit() ? "CAN_COMMIT" : String.valueOf(state),
+                phaseOf(canCommit() ? MigrationState.CAN_COMMIT : state, fullComplete),
+                "MIXED",
+                "AUTO",
+                config.getSyncMode() == null ? "UNKNOWN" : config.getSyncMode().name(),
                 canCommit() ? MigrationState.CAN_COMMIT : state,
                 canCommit(),
                 fullComplete,
@@ -300,12 +310,16 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                 startedAt,
                 committedAt,
                 startedAt > 0 ? (System.currentTimeMillis() - startedAt) : 0,
-                "collections=" + children.size());
+                lagMs,
+                children.size(),
+                "collections=" + children.size(),
+                canCommit() ? "ready" : "waiting child migrations");
     }
 
     public MigrationProgress commit() {
         if (!canCommit()) {
-            throw new IllegalStateException("multi-sync not ready to commit: " + progress());
+            throw new MongoSyncException(MongoSyncErrorCode.COMMIT_NOT_ALLOWED,
+                    "multi-sync not ready to commit: " + progress());
         }
         for (MongoSyncClient child : children) {
             child.commit();
@@ -384,5 +398,40 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             return MigrationState.STOPPED;
         }
         return right == null ? left : right;
+    }
+
+    private String phaseOf(MigrationState state, boolean fullComplete) {
+        switch (state) {
+            case IDLE:
+                return "NOT_STARTED";
+            case RUNNING:
+                if (config.getSyncMode().includesFull() && !fullComplete) {
+                    return "INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "CHANGE_EVENT_APPLY";
+                }
+                return "RUNNING";
+            case PAUSED:
+                if (config.getSyncMode().includesFull() && !fullComplete) {
+                    return "PAUSED_INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "PAUSED_CHANGE_EVENT_APPLY";
+                }
+                return "PAUSED";
+            case CAN_COMMIT:
+                return "READY_TO_COMMIT";
+            case COMMITTING:
+                return "COMMITTING";
+            case COMMITTED:
+                return "COMMITTED";
+            case STOPPED:
+                return "STOPPED";
+            case ERROR:
+                return "ERROR";
+            default:
+                return "UNKNOWN";
+        }
     }
 }

@@ -7,6 +7,8 @@ import com.whaleal.third.mongo.sink.config.WriteMode;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.source.oplog.MongoVersion;
 import com.whaleal.third.mongo.sync.ns.NamespaceFilter;
 import com.whaleal.third.mongo.sync.ns.NamespaceMapper;
@@ -413,10 +415,12 @@ public final class MongoMultiSyncConfig {
 
         public MongoMultiSyncConfig build() {
             if (c.sourceMongoClient == null && (c.sourceUri == null || c.sourceUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("sourceUri or sourceMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "sourceUri or sourceMongoClient is required");
             }
             if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("targetUri or targetMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "targetUri or targetMongoClient is required");
             }
             c.namespaceFilter();
             c.namespaceMapper();
@@ -426,7 +430,7 @@ public final class MongoMultiSyncConfig {
             if (hasOplogMulti
                     && c.captureMode != CaptureMode.OPLOG
                     && c.captureMode != CaptureMode.AUTO) {
-                throw new IllegalArgumentException(
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
                         "sourceOplogUris only supported when captureMode=OPLOG or AUTO");
             }
             return c;

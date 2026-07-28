@@ -15,6 +15,9 @@ CONF=/path/to.properties ./bin/mongosync.sh
 # 开启 progress 日志与自动 commit
 ./bin/mongosync.sh --progress-log-seconds 5 --commit-when-ready -f doc/examples/mongo-sync.example.properties
 
+# 关闭同一份配置启动的 mongosync 进程
+./bin/mongosync.sh --config doc/examples/mongo-sync.example.properties --shutdown
+
 # 校验
 ./bin/verify.sh
 ./bin/verify.sh -f doc/examples/mongo-verify.example.properties
@@ -30,6 +33,7 @@ CONF=/path/to.properties ./bin/mongosync.sh
 - 同步时会周期打印 `MigrationProgress`
 - Ctrl+C 停止同步
 - `-f` / `--config` 可显式指定配置文件
+- `--shutdown` 会按配置文件定位对应的运行实例并发送 `TERM`
 
 校验退出码：`0` 通过，`1` 有差异，`2` 错误。
 

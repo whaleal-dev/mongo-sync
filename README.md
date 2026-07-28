@@ -9,6 +9,7 @@
 
 ```bash
 ./bin/mongosync.sh -f conf/mongo-sync.properties   # 启动同步
+./bin/mongosync.sh --config conf/mongo-sync.properties --shutdown
 ./bin/verify.sh    -f conf/mongo-verify.properties # 数据比对
 ```
 
