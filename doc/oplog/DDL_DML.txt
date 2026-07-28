@@ -1,0 +1,568 @@
+use test10
+
+db.collection.insertOne({ name: "John", age: 25, city: "New York" })
+db.collection.insertMany([
+  { name: "Alice", age: 30, city: "London" },
+  { name: "Bob", age: 35, city: "Paris" }
+])
+
+db.collection.updateOne(
+  { name: "John" },
+  { $set: { age: 26, city: "San Francisco" } }
+)
+db.collection.updateMany(
+  { age: { $gte: 30 } },
+  { $inc: { age: 1 } }
+)
+
+
+
+
+db.collection.deleteOne({ name: "John" })
+db.collection.deleteMany({ age: { $gte: 30 } })
+
+
+
+
+
+
+db.createCollection("students", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         title: "Student Object Validation",
+         required: [ "address", "major", "name", "year" ],
+         properties: {
+            name: {
+               bsonType: "string",
+               description: "'name' must be a string and is required"
+            },
+            year: {
+               bsonType: "int",
+               minimum: 2017,
+               maximum: 3017,
+               description: "'year' must be an integer in [ 2017, 3017 ] and is required"
+            },
+            gpa: {
+               bsonType: [ "double" ],
+               description: "'gpa' must be a double if the field exists"
+            }
+         }
+      }
+   }
+} )
+
+
+db.students.insertOne( {
+   name: "Alice",
+   year: Int32( 2019 ),
+   major: "History",
+   gpa: Int32(3),
+   address: {
+      city: "NYC",
+      street: "33rd Street"
+   }
+} )
+
+
+
+db.students.insertOne( {
+   name: "Alice",
+   year: NumberInt(2019),
+   major: "History",
+   gpa: Double(3.0),
+   address: {
+      city: "NYC",
+      street: "33rd Street"
+   }
+} )
+
+
+
+
+
+db.createCollection{ "sales", {
+  validator: {
+    "$and": [
+      {
+        "$expr": {
+          "$lt": ["$lineItems.discountedPrice", "$lineItems.price"]
+        }
+      },
+      {
+        "$jsonSchema": {
+          "properties": {
+            "items": { "bsonType": "array" }
+          }
+        }
+      }
+    ]
+  }
+}
+
+use test2
+
+db.createCollection("shipping", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         title: "Shipping Country Validation",
+         properties: {
+            country: {
+               enum: [ "France", "United Kingdom", "United States" ],
+               description: "Must be either France, United Kingdom, or United States"
+            }
+         }
+      }
+   }
+} )
+
+
+db.shipping.insertOne( {
+   item: "sweater",
+   size: "medium",
+   country: "France"
+} )
+
+
+use test3
+
+db.createCollection("sales",
+   {
+      validator:
+         {
+            "$jsonSchema": {
+               "properties": {
+                  "storeLocation": { "bsonType": "string" }
+               }
+            }
+         }
+    }
+ )
+
+
+
+
+
+
+ db.createCollection("store",
+    {
+       validator:
+          {
+             "$jsonSchema": {
+                "properties": {
+                   "storeLocation": { "bsonType": [ "null", "string" ] }
+                }
+             }
+          }
+     }
+  )
+
+use test4
+
+db.createCollection( "orders",
+   {
+      validator: {
+         $expr:
+            {
+               $eq: [
+                  "$totalWithVAT",
+                  { $multiply: [ "$total", { $sum:[ 1, "$VAT" ] } ] }
+               ]
+            }
+      }
+   }
+)
+
+
+
+
+db.createCollection{ "sales", {
+  validator: {
+    "$and": [
+      {
+        "$expr": {
+          "$lt": ["$lineItems.discountedPrice", "$lineItems.price"]
+        }
+      },
+      {
+        "$jsonSchema": {
+          "properties": {
+            "items": { "bsonType": "array" }
+          }
+        }
+      }
+    ]
+  }
+}
+
+
+
+
+
+db.createCollection("users", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: [ "username", "password" ],
+         properties: {
+            username: {
+               bsonType: "string",
+               description: "must be a string and is required"
+            },
+            password: {
+               bsonType: "string",
+               minLength: 8,
+               description: "must be a string at least 8 characters long, and is required"
+            }
+         }
+      }
+   }
+} )
+
+
+
+
+db.runCommand( { collMod: "users",
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: [ "username", "password" ],
+         properties: {
+            username: {
+               bsonType: "string",
+               description: "must be a string and is required"
+            },
+            password: {
+               bsonType: "string",
+               minLength: 12,
+               description: "must be a string of at least 12 characters, and is required"
+            }
+         }
+      }
+   }
+} )
+
+
+
+db.users.insertOne(
+   {
+      "username": "salesAdmin01",
+      "password": "kT9$j4wg#M"
+   }
+)
+
+db.users.insertOne(
+   {
+      "username": "salesAdmin01",
+      "password": "8p&SQd7T90$KKx"
+   }
+)
+
+
+
+db.contacts.insertMany([
+   { "_id": 1, "name": "Anne", "phone": "+1 555 123 456", "city": "London", "status": "Complete" },
+   { "_id": 2, "name": "Ivan", "city": "Vancouver" }
+])
+
+
+
+
+db.contacts.updateOne(
+   { _id: 1 },
+   { $set: { name: 10 } }
+)
+
+db.contacts.updateOne(
+   { _id: 2 },
+   { $set: { name: 20 } }
+)
+
+
+
+db.runCommand( {
+   collMod: "contacts",
+   validator: { $jsonSchema: {
+      bsonType: "object",
+      required: [ "phone", "name" ],
+      properties: {
+         phone: {
+            bsonType: "string",
+            description: "phone must be a string and is required"
+         },
+         name: {
+            bsonType: "string",
+            description: "name must be a string and is required"
+         }
+      }
+   } },
+   validationLevel: "moderate"
+} )
+
+
+
+db.contacts.updateOne(
+   { _id: 1 },
+   { $set: { name: 10 } }
+)
+
+db.contacts.updateOne(
+   { _id: 2 },
+   { $set: { name: 20 } }
+)
+
+
+
+
+
+db.contacts.insertOne(
+   { name: "Amanda", email: "amanda@xyz.com" }
+)
+
+
+
+
+db.createCollection( "contacts2", {
+   validator: { $jsonSchema: {
+      bsonType: "object",
+      required: [ "phone" ],
+      properties: {
+         phone: {
+            bsonType: "string",
+            description: "must be a string and is required"
+         },
+         email: {
+            bsonType : "string",
+            pattern : "@mongodb\\.com$",
+            description: "must be a string and end with '@mongodb.com'"
+         }
+      }
+   } },
+   validationAction: "warn"
+} )
+
+
+
+
+
+db.adminCommand(
+   { getLog:'global'} ).log.forEach(x => { print(x) }
+)
+
+
+
+
+db.inventory.insertMany( [
+   { item: "journal", qty: NumberInt(25), size: { h: 14, w: 21, uom: "cm" }, instock: true },
+   { item: "notebook", qty: NumberInt(50), size: { h: 8.5, w: 11, uom: "in" }, instock: true },
+   { item: "paper", qty: NumberInt(100), size: { h: 8.5, w: 11, uom: "in" }, instock: 1 },
+   { item: "planner", qty: NumberInt(75), size: { h: 22.85, w: 30, uom: "cm" }, instock: 1 },
+   { item: "postcard", qty: NumberInt(45), size: { h: 10, w: 15.25, uom: "cm" }, instock: true },
+   { item: "apple", qty: NumberInt(45), status: "A", instock: true },
+   { item: "pears", qty: NumberInt(50), status: "A", instock: true }
+] )
+
+
+
+
+db.inventory.updateMany(
+   {
+      $nor: [ myschema ]
+   },
+   {
+      $set: { isValid: false }
+   }
+)
+
+db.inventory.deleteMany( { $nor: [ myschema ] } )
+
+
+
+
+
+
+
+
+
+
+
+db.createCollection("students", {
+   validator: {
+      $jsonSchema: {
+         bsonType: "object",
+         required: [ "name", "year", "major", "address" ],
+         properties: {
+            name: {
+               bsonType: "string",
+               description: "must be a string and is required"
+            },
+            year: {
+               bsonType: "int",
+               minimum: 2017,
+               maximum: 3017,
+               description: "must be an integer in [ 2017, 3017 ] and is required"
+            }
+         }
+      }
+   }
+} )
+
+
+
+
+
+
+
+
+
+
+db.runCommand( {
+   insert: "students",
+   documents: [
+      {
+         name: "Alice",
+         year: Int32( 2016 ),
+         major: "History",
+         gpa: Double(3.0),
+         address: {
+            city: "NYC",
+            street: "33rd Street"
+         }
+      }
+   ],
+   bypassDocumentValidation: true
+} )
+
+
+
+
+
+use test2
+
+
+
+db.inventory.insertOne(
+   { item: "canvas", qty: 100, tags: ["cotton"], size: { h: 28, w: 35.5, uom: "cm" } }
+)
+
+
+db.inventory.insertMany([
+   { item: "journal", qty: 25, tags: ["blank", "red"], size: { h: 14, w: 21, uom: "cm" } },
+   { item: "mat", qty: 85, tags: ["gray"], size: { h: 27.9, w: 35.5, uom: "cm" } },
+   { item: "mousepad", qty: 25, tags: ["gel", "blue"], size: { h: 19, w: 22.85, uom: "cm" } }
+])
+
+
+
+
+db.students.insertMany( [
+   { _id: 1, test1: 95, test2: 92, test3: 90, modified: new Date("01/05/2020") },
+   { _id: 2, test1: 98, test2: 100, test3: 102, modified: new Date("01/05/2020") },
+   { _id: 3, test1: 95, test2: 110, modified: new Date("01/04/2020") }
+] )
+
+
+db.students.updateOne( { _id: 3 }, [ { $set: { "test3": 98, modified: "$$NOW"} } ] )
+
+
+db.students2.insertMany( [
+   { "_id" : 1, quiz1: 8, test2: 100, quiz2: 9, modified: new Date("01/05/2020") },
+   { "_id" : 2, quiz2: 5, test1: 80, test2: 89, modified: new Date("01/05/2020") },
+] )
+
+
+
+db.students2.updateMany( {},
+  [
+    { $replaceRoot: { newRoot:
+       { $mergeObjects: [ { quiz1: 0, quiz2: 0, test1: 0, test2: 0 }, "$$ROOT" ] }
+    } },
+    { $set: { modified: "$$NOW"}  }
+  ]
+)
+
+
+
+
+db.students3.insertMany( [
+   { "_id" : 1, "tests" : [ 95, 92, 90 ], "modified" : ISODate("2019-01-01T00:00:00Z") },
+   { "_id" : 2, "tests" : [ 94, 88, 90 ], "modified" : ISODate("2019-01-01T00:00:00Z") },
+   { "_id" : 3, "tests" : [ 70, 75, 82 ], "modified" : ISODate("2019-01-01T00:00:00Z") }
+] );
+
+
+
+db.students3.updateMany(
+   { },
+   [
+     { $set: { average : { $trunc: [ { $avg: "$tests" }, 0 ] }, modified: "$$NOW" } },
+     { $set: { grade: { $switch: {
+                           branches: [
+                               { case: { $gte: [ "$average", 90 ] }, then: "A" },
+                               { case: { $gte: [ "$average", 80 ] }, then: "B" },
+                               { case: { $gte: [ "$average", 70 ] }, then: "C" },
+                               { case: { $gte: [ "$average", 60 ] }, then: "D" }
+                           ],
+                           default: "F"
+     } } } }
+   ]
+)
+
+db.students4.insertMany( [
+  { "_id" : 1, "quizzes" : [ 4, 6, 7 ] },
+  { "_id" : 2, "quizzes" : [ 5 ] },
+  { "_id" : 3, "quizzes" : [ 10, 10, 10 ] }
+] )
+
+
+
+db.students4.updateOne( { _id: 2 },
+  [ { $set: { quizzes: { $concatArrays: [ "$quizzes", [ 8, 6 ]  ] } } } ]
+)
+
+
+db.temperatures.insertMany( [
+  { "_id" : 1, "date" : ISODate("2019-06-23"), "tempsC" : [ 4, 12, 17 ] },
+  { "_id" : 2, "date" : ISODate("2019-07-07"), "tempsC" : [ 14, 24, 11 ] },
+  { "_id" : 3, "date" : ISODate("2019-10-30"), "tempsC" : [ 18, 6, 8 ] }
+] )
+
+
+
+db.temperatures.updateMany( { },
+  [
+    { $addFields: { "tempsF": {
+          $map: {
+             input: "$tempsC",
+             as: "celsius",
+             in: { $add: [ { $multiply: ["$$celsius", 9/5 ] }, 32 ] }
+          }
+    } } }
+  ]
+)
+
+
+
+
+
+db.inventory.insertMany( [
+   { item: "journal", qty: 25, size: { h: 14, w: 21, uom: "cm" }, status: "A" },
+   { item: "notebook", qty: 50, size: { h: 8.5, w: 11, uom: "in" }, status: "P" },
+   { item: "paper", qty: 100, size: { h: 8.5, w: 11, uom: "in" }, status: "D" },
+   { item: "planner", qty: 75, size: { h: 22.85, w: 30, uom: "cm" }, status: "D" },
+   { item: "postcard", qty: 45, size: { h: 10, w: 15.25, uom: "cm" }, status: "A" },
+] );
+
+db.inventory.deleteMany({ status : "A" })
+db.inventory.deleteOne( { status: "D" } )
+
+
+
+
+
+
+
+
+
+
