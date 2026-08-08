@@ -3,11 +3,12 @@ package com.whaleal.third.mongo.sync.sdk;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.whaleal.third.mongo.source.config.CaptureMode;
-import com.whaleal.third.mongo.source.topology.ShardEndpoint;
 import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.ns.CollectionDiscovery;
 import com.whaleal.third.mongo.sync.ns.NamespaceFilter;
 import com.whaleal.third.mongo.sync.ns.NamespaceMapper;
@@ -94,17 +95,11 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                             + config.getNamespaceWhite() + " black=" + config.getNamespaceBlack());
         }
 
-        // 多表共享一次拓扑探测，避免每张表重复 listShards
-        boolean hasExplicitShards = (config.getSourceOplogUris() != null
-                && !config.getSourceOplogUris().isEmpty())
-                || (config.getSourceOplogUrisSemicolon() != null
-                && !config.getSourceOplogUrisSemicolon().trim().isEmpty());
+        // 多表共享一次拓扑探测，避免每张表重复探测
         SourceTopologyInfo topologyInfo = SourceTopologyDetector.detect(
                 source,
                 config.getCaptureMode(),
                 config.getSourceUri(),
-                true,
-                !hasExplicitShards,
                 config.getSyncMode());
         CaptureMode resolvedCapture = topologyInfo.getResolvedCaptureMode();
 
@@ -140,7 +135,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .offsetLogIntervalSeconds(config.getOffsetLogIntervalSeconds())
                         .fullSyncParallelism(config.getFullSyncParallelism())
                         .fullSyncBatchSize(config.getFullSyncBatchSize())
-                        .fullSyncTaskMbSize(config.getFullSyncTaskMbSize());
+                        .fullSyncTaskMbSize(config.getFullSyncTaskMbSize())
+                        .commitMaxLagMs(config.getCommitMaxLagMs());
 
                 if (config.getMongoVersion() != null) {
                     b.mongoVersion(config.getMongoVersion());
@@ -149,28 +145,6 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                 }
                 if (config.getOffsetStoreDir() != null && !config.getOffsetStoreDir().trim().isEmpty()) {
                     b.offsetStoreDir(config.getOffsetStoreDir().trim());
-                }
-                if (resolvedCapture == CaptureMode.OPLOG) {
-                    if (config.getSourceOplogUris() != null && !config.getSourceOplogUris().isEmpty()) {
-                        b.sourceOplogUris(config.getSourceOplogUris());
-                    } else if (config.getSourceOplogUrisSemicolon() != null
-                            && !config.getSourceOplogUrisSemicolon().trim().isEmpty()) {
-                        b.sourceOplogUrisSemicolon(config.getSourceOplogUrisSemicolon());
-                    } else if (topologyInfo.isMultiShardOplog() && !topologyInfo.getShards().isEmpty()) {
-                        List<String> uris = new ArrayList<String>();
-                        List<String> names = new ArrayList<String>();
-                        for (ShardEndpoint ep : topologyInfo.getShards()) {
-                            uris.add(ep.getUri());
-                            names.add(ep.getShardId());
-                        }
-                        b.sourceOplogUris(uris);
-                        b.sourceOplogShardNames(names.toArray(new String[names.size()]));
-                    }
-                    if (config.getSourceOplogShardNames() != null
-                            && !config.getSourceOplogShardNames().isEmpty()) {
-                        b.sourceOplogShardNames(config.getSourceOplogShardNames()
-                                .toArray(new String[config.getSourceOplogShardNames().size()]));
-                    }
                 }
                 children.add(MongoSyncClient.create(b));
             }
@@ -198,7 +172,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
 
     public void start() {
         if (stopped.get()) {
-            throw new IllegalStateException("multi-sync already stopped");
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "multi-sync already stopped");
         }
         if (!started.compareAndSet(false, true)) {
             return;
@@ -210,6 +185,24 @@ public final class MongoMultiSyncClient implements AutoCloseable {
 
     public void stop() {
         close();
+    }
+
+    public synchronized MigrationProgress pause() {
+        List<ChildFailure> failures = applyToAllChildren(new ChildTask() {
+            @Override
+            public void apply(MongoSyncClient child) {
+                child.pause();
+            }
+        });
+        MigrationProgress p = progress();
+        throwIfPartialFailures("pause", failures, p);
+        return p;
+    }
+
+    public void resume() {
+        for (MongoSyncClient child : children) {
+            child.start();
+        }
     }
 
     public List<NamespaceMapper.NsPair> getNamespaces() {
@@ -238,11 +231,13 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         long incremental = 0;
         long ddl = 0;
         long inflight = 0;
+        long estimatedTotal = 0;
         long startedAt = 0;
-        Long committedAt = null;
+        Long maxCommittedAt = null;
+        boolean allCommitted = !children.isEmpty();
         Long lastEventTs = null;
+        Long lagMs = null;
         boolean fullComplete = true;
-        int shardSources = 0;
 
         for (MongoSyncClient child : children) {
             MigrationProgress p = child.progress();
@@ -251,7 +246,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             incremental += p.getIncrementalEvents();
             ddl += p.getDdlEvents();
             inflight += p.getInflightEvents();
-            shardSources += p.getShardSourceCount();
+            estimatedTotal += p.getEstimatedTotalDocuments();
             if (!p.isFullSyncComplete()) {
                 fullComplete = false;
             }
@@ -259,39 +254,54 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                 startedAt = p.getStartedAtMs();
             }
             if (p.getCommittedAtMs() == null) {
-                committedAt = null;
-            } else if (committedAt == null || p.getCommittedAtMs() > committedAt.longValue()) {
-                committedAt = p.getCommittedAtMs();
+                allCommitted = false;
+            } else if (maxCommittedAt == null || p.getCommittedAtMs() > maxCommittedAt.longValue()) {
+                maxCommittedAt = p.getCommittedAtMs();
             }
             if (p.getLastEventTsMs() != null
                     && (lastEventTs == null || p.getLastEventTsMs() > lastEventTs.longValue())) {
                 lastEventTs = p.getLastEventTsMs();
             }
+            if (p.getLagMs() != null && (lagMs == null || p.getLagMs() > lagMs.longValue())) {
+                lagMs = p.getLagMs();
+            }
         }
+        Long committedAt = allCommitted ? maxCommittedAt : null;
 
         return new MigrationProgress(
+                "multi(" + children.size() + ")",
+                phaseOf(canCommit() ? MigrationState.CAN_COMMIT : state, fullComplete),
+                "MIXED",
+                "AUTO",
+                config.getSyncMode() == null ? "UNKNOWN" : config.getSyncMode().name(),
                 canCommit() ? MigrationState.CAN_COMMIT : state,
                 canCommit(),
                 fullComplete,
+                estimatedTotal,
                 snapshot,
                 incremental,
                 ddl,
                 inflight,
-                shardSources,
                 lastEventTs,
                 startedAt,
                 committedAt,
-                "collections=" + children.size());
+                startedAt > 0 ? (System.currentTimeMillis() - startedAt) : 0,
+                lagMs,
+                children.size(),
+                "collections=" + children.size(),
+                canCommit() ? "ready" : "waiting child migrations");
     }
 
-    public MigrationProgress commit() {
-        if (!canCommit()) {
-            throw new IllegalStateException("multi-sync not ready to commit: " + progress());
-        }
-        for (MongoSyncClient child : children) {
-            child.commit();
-        }
-        return progress();
+    public synchronized MigrationProgress commit() {
+        List<ChildFailure> failures = applyToAllChildren(new ChildTask() {
+            @Override
+            public void apply(MongoSyncClient child) {
+                child.commit();
+            }
+        });
+        MigrationProgress p = progress();
+        throwIfPartialFailures("commit", failures, p);
+        return p;
     }
 
     public MongoMultiSyncConfig getConfig() {
@@ -323,6 +333,66 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         }
     }
 
+    private interface ChildTask {
+        void apply(MongoSyncClient child);
+    }
+
+    private static final class ChildFailure {
+        private final String namespace;
+        private final RuntimeException error;
+
+        private ChildFailure(String namespace, RuntimeException error) {
+            this.namespace = namespace;
+            this.error = error;
+        }
+
+        private String describe() {
+            if (error instanceof MongoSyncException) {
+                MongoSyncException mse = (MongoSyncException) error;
+                return namespace + ": [" + mse.getCode() + "] " + mse.getMessage();
+            }
+            return namespace + ": " + error.getMessage();
+        }
+    }
+
+    private List<ChildFailure> applyToAllChildren(ChildTask task) {
+        List<ChildFailure> failures = new ArrayList<ChildFailure>();
+        for (MongoSyncClient child : children) {
+            try {
+                task.apply(child);
+            } catch (RuntimeException e) {
+                failures.add(new ChildFailure(child.getConfig().sourceNs(), e));
+            }
+        }
+        return failures;
+    }
+
+    private void throwIfPartialFailures(String operation,
+                                        List<ChildFailure> failures,
+                                        MigrationProgress progressSnapshot) {
+        if (failures.isEmpty()) {
+            return;
+        }
+        StringBuilder msg = new StringBuilder();
+        msg.append("multi-sync ").append(operation).append(" partial failure (")
+                .append(failures.size()).append('/').append(children.size()).append("): ");
+        for (int i = 0; i < failures.size(); i++) {
+            if (i > 0) {
+                msg.append("; ");
+            }
+            msg.append(failures.get(i).describe());
+        }
+        msg.append("; progress=").append(progressSnapshot);
+        MongoSyncException ex = new MongoSyncException(
+                MongoSyncErrorCode.MULTI_OPERATION_PARTIAL_FAILURE,
+                msg.toString(),
+                failures.get(0).error);
+        for (int i = 1; i < failures.size(); i++) {
+            ex.addSuppressed(failures.get(i).error);
+        }
+        throw ex;
+    }
+
     private static String summarize(List<NamespaceMapper.NsPair> pairs) {
         StringBuilder sb = new StringBuilder();
         int n = Math.min(pairs.size(), 20);
@@ -349,6 +419,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         if (left == MigrationState.COMMITTING || right == MigrationState.COMMITTING) {
             return MigrationState.COMMITTING;
         }
+        if (left == MigrationState.PAUSED || right == MigrationState.PAUSED) {
+            return MigrationState.PAUSED;
+        }
         if (left == MigrationState.COMMITTED && right == MigrationState.COMMITTED) {
             return MigrationState.COMMITTED;
         }
@@ -362,5 +435,40 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             return MigrationState.STOPPED;
         }
         return right == null ? left : right;
+    }
+
+    private String phaseOf(MigrationState state, boolean fullComplete) {
+        switch (state) {
+            case IDLE:
+                return "NOT_STARTED";
+            case RUNNING:
+                if (config.getSyncMode().includesFull() && !fullComplete) {
+                    return "INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "CHANGE_EVENT_APPLY";
+                }
+                return "RUNNING";
+            case PAUSED:
+                if (config.getSyncMode().includesFull() && !fullComplete) {
+                    return "PAUSED_INITIAL_COPY";
+                }
+                if (config.getSyncMode().includesIncremental()) {
+                    return "PAUSED_CHANGE_EVENT_APPLY";
+                }
+                return "PAUSED";
+            case CAN_COMMIT:
+                return "READY_TO_COMMIT";
+            case COMMITTING:
+                return "COMMITTING";
+            case COMMITTED:
+                return "COMMITTED";
+            case STOPPED:
+                return "STOPPED";
+            case ERROR:
+                return "ERROR";
+            default:
+                return "UNKNOWN";
+        }
     }
 }

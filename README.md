@@ -8,8 +8,9 @@
 面向迁移、灾备、多活与跨架构搬迁：一套 API / 一条命令，完成 **全量 + 增量**、**DDL 跟随**、**多库表过滤** 与 **数据校验**。设计参考 d2t / MongoShake，并保持可嵌入 Java 业务进程的轻量形态。
 
 ```bash
-./bin/mongosync.sh conf/mongo-sync.properties   # 启动同步
-./bin/verify.sh    conf/mongo-verify.properties # 数据比对
+./bin/mongosync.sh -f conf/mongo-sync.properties   # 启动同步
+./bin/mongosync.sh --config conf/mongo-sync.properties --shutdown
+./bin/verify.sh    -f conf/mongo-verify.properties # 数据比对
 ```
 
 **QQ 交流群：`983986505`**（使用问题、需求反馈、经验交流欢迎加群）
@@ -24,7 +25,7 @@
 | 同构上云（DocumentDB / DDS） | 标准 Mongo 驱动写入协议兼容库，便于迁云 |
 | 迁库 / 扩容不停服 | 全量∥增量并行（`FULL_AND_INCREMENTAL`），UPSERT 兜底窗口重复 |
 | 跨架构互传 | 自动识别 standalone / 副本集 / 分片，匹配读任务（Oplog / ChangeStream） |
-| 分片集群增量 | mongos 拉全量；各 shard 并行拉 Oplog（可自动 `listShards`） |
+| 分片集群增量 | mongos 拉全量 + ChangeStream@mongos（MongoDB 3.6+；不再提供多分片 OPLOG） |
 | 大表全量加速 | 按 `_id` 切段多任务并行读（对齐 d2t 拆分思路） |
 | 结构一起走 | 启动预建集合 / 索引；运行中 DDL（删表、改名、建删索引）可落地 |
 | 写序与吞吐 | `_id` 分桶 + LMAX Disruptor 背压；唯一索引自动有序写 |
@@ -43,8 +44,45 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 - **多库表**：白/黑名单、`ns` 变换（`MongoMultiSyncClient`）  
 - **元数据**：`bootstrapCollection` / `bootstrapIndexes` 可分别开关；支持跳过 TTL 索引  
 - **位点**：可选文件持久化（`offset.store.dir`）+ 周期心跳日志  
-- **迁移状态机**：`MigrationProgress` / `canCommit` / `commit`（第一版）  
+- **迁移状态机**：`MigrationProgress` / `canCommit` / `commit`；`canCommit` 要求全量完成、pipeline 排空，且增量滞后 ≤ `commit.max.lag.ms`（默认 10000）  
 - **校验**：`VerifyMain` 支持单表 / 多表白名单  
+
+---
+
+## 高效数据校验
+
+- 能确保数据总量一致
+- 能确保数据信息一致
+- 能确保异构系统数据同步一致
+- 能确保数据索引一致
+- 能确保数据结构一致
+
+---
+
+## 多种数据同步方案
+
+- 全量数据复制
+- 实时数据同步
+- 增量数据同步
+- 自定义同步范围
+- 复合数据同步方案
+
+---
+
+## 高速数据同步机制
+
+- 100% 传输带宽利用率
+- 可控 CPU 利用率
+- 内存使用率可配置
+- 支持多表并传
+
+---
+
+## 部署简单、稳定高效
+
+- 体积小巧
+- 断点续传
+- 支持多版本 MongoDB 同步
 
 ---
 
@@ -69,17 +107,10 @@ chmod +x bin/*.sh
 # 编辑配置：源/目标 URI、库表或 namespace.white
 cp doc/examples/mongo-sync.example.properties my-sync.properties
 
-./bin/mongosync.sh my-sync.properties
+./bin/mongosync.sh -f my-sync.properties
 # Ctrl+C 优雅停止
 
-./bin/verify.sh doc/examples/mongo-verify.example.properties
-```
-
-可选打包 fat jar：
-
-```bash
-./bin/package.sh
-# → dist/lib/mongo-sync-all.jar + dist/conf/
+./bin/verify.sh -f doc/examples/mongo-verify.example.properties
 ```
 
 ### 2. 嵌入式 SDK
@@ -113,47 +144,19 @@ multi.start();
 
 ---
 
-## 模块结构
+## 常见问题（FAQ）
 
-```text
-mongo-sync/
-├── mongo-transfer-model/   通用传输模型（捕获无关）
-├── mongo-source-client/    Oplog / ChangeStream → TransferEvent
-├── mongo-sink-client/      TransferEvent / DdlEvent → 目标库
-├── mongo-sync-client/      编排：分桶 + Disruptor + 锁 → Sink
-├── bin/                    mongosync.sh / verify.sh / package.sh
-└── doc/                    架构说明、配置示例、oplog 样例
-```
+### 支持哪些数据同步方式？
 
-数据契约：
+支持多种数据同步方案，包括全量数据复制、实时数据同步、增量数据同步、自定义同步范围以及复合数据同步方案，可根据业务需求灵活选择。
 
-| 模型 | 含义 |
-|------|------|
-| `TransferEvent` | 文档变更 `c` / `u` / `d` / `r` |
-| `DdlEvent` | 删库、删表、建删索引、建表、改名等 |
+### 数据校验功能有哪些？
 
----
+提供高效数据校验功能，能确保数据总量一致、数据信息一致、异构系统数据同步一致、数据索引一致以及数据结构一致，全方位保障数据准确性。
 
-## 构建与依赖
+### 同步性能如何？
 
-```bash
-mvn clean install -DskipTests
-```
-
-| 组件 | 版本要求 |
-|------|----------|
-| JDK | **1.8+** |
-| Caffeine | **2.9.3**（勿用 3.x） |
-| Disruptor | **3.4.4**（勿用 4.x） |
-| mongodb-driver-sync | 4.11.1 |
-
-```xml
-<dependency>
-  <groupId>com.whaleal.third</groupId>
-  <artifactId>mongo-sync-client</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
-</dependency>
-```
+采用高速数据同步机制，实现 100% 传输带宽利用率，支持可控 CPU 利用率，内存使用率可配置，并支持多表并传，确保同步过程高效稳定。同时支持断点续传功能，避免网络中断导致的数据丢失。
 
 ---
 

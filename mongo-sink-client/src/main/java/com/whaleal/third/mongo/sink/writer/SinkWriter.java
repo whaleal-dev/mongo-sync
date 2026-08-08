@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -42,6 +43,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -59,6 +61,15 @@ public class SinkWriter implements AutoCloseable {
     private final DdlApplier ddlApplier;
     private final List<WriteModel<BsonDocument>> buffer = new ArrayList<WriteModel<BsonDocument>>();
     private final Object lock = new Object();
+
+    /** 入缓冲序号，单调递增；由 {@link #lock} 保护。 */
+    private long enqueueSeq;
+    /** 当前缓冲中首个 model 的序号；由 {@link #lock} 保护。 */
+    private long bufferMinSeq;
+    /** 已提交给写入线程但尚未完成的批次：{@code maxSeq → minSeq}。 */
+    private final ConcurrentSkipListMap<Long, Long> pendingBatches = new ConcurrentSkipListMap<Long, Long>();
+    /** 已提交的最大序号。 */
+    private final AtomicLong submittedThrough = new AtomicLong(0);
 
     private final ExecutorService executor;
     private final boolean ownsExecutor;
@@ -103,15 +114,19 @@ public class SinkWriter implements AutoCloseable {
 
     /**
      * 唯一文档事件入口：只识别 {@link TransferEvent}（与捕获协议无关）。
+     *
+     * @return 本次写入的序号；{@code 0} 表示事件未产生任何写入。
+     *         配合 {@link #landedThrough()} 可判断该写入是否已在目标端生效。
      */
-    public void apply(TransferEvent event) {
+    public long apply(TransferEvent event) {
         if (event == null || event.getOp() == null) {
-            return;
+            return 0L;
         }
         WriteModel<BsonDocument> model = toWriteModel(event);
-        if (model != null) {
-            enqueue(model);
+        if (model == null) {
+            return 0L;
         }
+        return enqueue(model);
     }
 
     public void apply(String op, Map<String, Object> after, Map<String, Object> before) {
@@ -191,19 +206,35 @@ public class SinkWriter implements AutoCloseable {
      */
     public SinkWriteResult flush() {
         checkAsyncError();
-        List<WriteModel<BsonDocument>> batch;
+        PendingBatch batch;
         synchronized (lock) {
-            if (buffer.isEmpty()) {
-                return SinkWriteResult.empty();
-            }
-            batch = new ArrayList<WriteModel<BsonDocument>>(buffer);
-            buffer.clear();
+            batch = takeBufferLocked();
+        }
+        if (batch == null) {
+            return SinkWriteResult.empty();
         }
         if (!async || executor == null) {
-            return doBulkWrite(batch);
+            return runBatch(batch);
         }
         submitOrWrite(batch);
         return SinkWriteResult.empty();
+    }
+
+    /**
+     * 已确认落库的最大写入序号：所有 {@code seq <= landedThrough()} 的写入都已在目标端生效。
+     * <p>
+     * 仍在缓冲中、以及已提交但未完成的批次都不计入。调用方据此判断某个 {@code _id}
+     * 的上一次写入是否还可能与后续写入并发乱序。
+     */
+    public long landedThrough() {
+        // 必须先读 submittedThrough：批次注册（put）先于 submittedThrough 更新，
+        // 反序读取会在「旧批次刚完成、新批次刚注册」的瞬间高报水位。
+        long submitted = submittedThrough.get();
+        Map.Entry<Long, Long> oldestPending = pendingBatches.firstEntry();
+        if (oldestPending == null) {
+            return submitted;
+        }
+        return oldestPending.getValue() - 1;
     }
 
     /**
@@ -259,30 +290,76 @@ public class SinkWriter implements AutoCloseable {
         }
     }
 
-    private void enqueue(WriteModel<BsonDocument> model) {
+    private long enqueue(WriteModel<BsonDocument> model) {
         checkAsyncError();
-        List<WriteModel<BsonDocument>> batchToFlush = null;
+        long seq;
+        PendingBatch batchToFlush = null;
         synchronized (lock) {
+            if (buffer.isEmpty()) {
+                bufferMinSeq = enqueueSeq + 1;
+            }
+            seq = ++enqueueSeq;
             buffer.add(model);
             if (buffer.size() >= config.getBatchSize()) {
-                batchToFlush = new ArrayList<WriteModel<BsonDocument>>(buffer);
-                buffer.clear();
+                batchToFlush = takeBufferLocked();
             }
         }
         if (batchToFlush != null) {
             submitOrWrite(batchToFlush);
         }
+        return seq;
     }
 
-    private void submitOrWrite(List<WriteModel<BsonDocument>> batch) {
+    /**
+     * 摘走当前缓冲并登记为在途批次。必须持有 {@link #lock} 调用：
+     * 登记顺序要与序号顺序严格一致，{@link #landedThrough()} 依赖 {@link #pendingBatches} 的最小项。
+     */
+    private PendingBatch takeBufferLocked() {
+        if (buffer.isEmpty()) {
+            return null;
+        }
+        long minSeq = bufferMinSeq;
+        long maxSeq = enqueueSeq;
+        List<WriteModel<BsonDocument>> models = new ArrayList<WriteModel<BsonDocument>>(buffer);
+        buffer.clear();
+        pendingBatches.put(maxSeq, minSeq);
+        submittedThrough.set(maxSeq);
+        return new PendingBatch(models, maxSeq);
+    }
+
+    private void submitOrWrite(PendingBatch batch) {
         if (!async || executor == null) {
-            doBulkWrite(batch);
+            runBatch(batch);
             return;
         }
-        Future<SinkWriteResult> future = executor.submit(() -> doBulkWrite(batch));
+        Future<SinkWriteResult> future;
+        try {
+            future = executor.submit(() -> runBatch(batch));
+        } catch (RuntimeException e) {
+            pendingBatches.remove(batch.maxSeq);
+            throw e;
+        }
         synchronized (inflight) {
             inflight.add(future);
             compactInflightLocked();
+        }
+    }
+
+    private SinkWriteResult runBatch(PendingBatch batch) {
+        try {
+            return doBulkWrite(batch.models);
+        } finally {
+            pendingBatches.remove(batch.maxSeq);
+        }
+    }
+
+    private static final class PendingBatch {
+        final List<WriteModel<BsonDocument>> models;
+        final long maxSeq;
+
+        PendingBatch(List<WriteModel<BsonDocument>> models, long maxSeq) {
+            this.models = models;
+            this.maxSeq = maxSeq;
         }
     }
 

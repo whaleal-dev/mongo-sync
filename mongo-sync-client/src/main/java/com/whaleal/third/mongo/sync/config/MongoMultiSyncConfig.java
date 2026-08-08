@@ -7,6 +7,8 @@ import com.whaleal.third.mongo.sink.config.WriteMode;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.source.oplog.MongoVersion;
 import com.whaleal.third.mongo.sync.ns.NamespaceFilter;
 import com.whaleal.third.mongo.sync.ns.NamespaceMapper;
@@ -56,10 +58,7 @@ public final class MongoMultiSyncConfig {
     private int fullSyncBatchSize = MongoSourceConfig.DEFAULT_FULL_SYNC_BATCH_SIZE;
     private int fullSyncTaskMbSize = MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
 
-    /** 分片 OPLOG 多源 URI（分号或 List）；透传给每个单表 Sync。 */
-    private String sourceOplogUrisSemicolon;
-    private java.util.List<String> sourceOplogUris = java.util.Collections.emptyList();
-    private java.util.List<String> sourceOplogShardNames = java.util.Collections.emptyList();
+    private long commitMaxLagMs = MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS;
 
     private MongoMultiSyncConfig() {
     }
@@ -184,16 +183,8 @@ public final class MongoMultiSyncConfig {
         return fullSyncTaskMbSize;
     }
 
-    public String getSourceOplogUrisSemicolon() {
-        return sourceOplogUrisSemicolon;
-    }
-
-    public java.util.List<String> getSourceOplogUris() {
-        return sourceOplogUris;
-    }
-
-    public java.util.List<String> getSourceOplogShardNames() {
-        return sourceOplogShardNames;
+    public long getCommitMaxLagMs() {
+        return commitMaxLagMs;
     }
 
     public NamespaceFilter namespaceFilter() {
@@ -380,55 +371,23 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
-        /** 分片 OPLOG 多源，分号分隔各 shard URI。 */
-        public Builder sourceOplogUrisSemicolon(String sourceOplogUrisSemicolon) {
-            c.sourceOplogUrisSemicolon = sourceOplogUrisSemicolon;
-            return this;
-        }
-
-        public Builder sourceOplogUris(java.util.List<String> sourceOplogUris) {
-            if (sourceOplogUris == null || sourceOplogUris.isEmpty()) {
-                c.sourceOplogUris = java.util.Collections.emptyList();
-            } else {
-                c.sourceOplogUris = java.util.Collections.unmodifiableList(
-                        new java.util.ArrayList<String>(sourceOplogUris));
-            }
-            return this;
-        }
-
-        public Builder sourceOplogShardNames(String... names) {
-            if (names == null || names.length == 0) {
-                c.sourceOplogShardNames = java.util.Collections.emptyList();
-            } else {
-                java.util.List<String> list = new java.util.ArrayList<String>();
-                for (String n : names) {
-                    if (n != null && !n.trim().isEmpty()) {
-                        list.add(n.trim());
-                    }
-                }
-                c.sourceOplogShardNames = java.util.Collections.unmodifiableList(list);
-            }
+        public Builder commitMaxLagMs(long commitMaxLagMs) {
+            c.commitMaxLagMs = commitMaxLagMs > 0L
+                    ? commitMaxLagMs : MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS;
             return this;
         }
 
         public MongoMultiSyncConfig build() {
             if (c.sourceMongoClient == null && (c.sourceUri == null || c.sourceUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("sourceUri or sourceMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "sourceUri or sourceMongoClient is required");
             }
             if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
-                throw new IllegalArgumentException("targetUri or targetMongoClient is required");
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                        "targetUri or targetMongoClient is required");
             }
             c.namespaceFilter();
             c.namespaceMapper();
-            boolean hasOplogMulti = (c.sourceOplogUrisSemicolon != null
-                    && !c.sourceOplogUrisSemicolon.trim().isEmpty())
-                    || (c.sourceOplogUris != null && !c.sourceOplogUris.isEmpty());
-            if (hasOplogMulti
-                    && c.captureMode != CaptureMode.OPLOG
-                    && c.captureMode != CaptureMode.AUTO) {
-                throw new IllegalArgumentException(
-                        "sourceOplogUris only supported when captureMode=OPLOG or AUTO");
-            }
             return c;
         }
     }

@@ -16,9 +16,10 @@ import com.whaleal.third.mongo.transfer.model.TransferEvent;
 import org.bson.Document;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 基于 LMAX Disruptor 的分桶写入流水线：
  * <ul>
  *   <li>每桶一个 RingBuffer + 单 EventHandler（同桶有序）</li>
- *   <li>同桶同 _id 再次出现时先 flush（对齐 d2t）</li>
+ *   <li>同桶同 _id 再次出现时，若前次写入尚未落库则先 flush（对齐 d2t）</li>
  *   <li>DDL：屏障 + 排空后串行 applyDdl</li>
  * </ul>
  */
@@ -49,6 +50,8 @@ public final class BucketWritePipeline implements AutoCloseable {
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final AtomicLong inflight = new AtomicLong(0);
     private final AtomicBoolean ddlBarrier = new AtomicBoolean(false);
+    private final AtomicLong droppedWhenStopped = new AtomicLong(0);
+    private final AtomicBoolean dropWarned = new AtomicBoolean(false);
 
     public BucketWritePipeline(MongoSinkClient sink,
                                IdBucketRouter router,
@@ -103,7 +106,11 @@ public final class BucketWritePipeline implements AutoCloseable {
     }
 
     public void offer(TransferEvent event) {
-        if (event == null || !running.get()) {
+        if (event == null) {
+            return;
+        }
+        if (!running.get()) {
+            onDroppedWhenStopped();
             return;
         }
         // 与 DDL 屏障协作：必须在计入 inflight 后再次确认 barrier，避免 TOCTOU
@@ -113,6 +120,7 @@ public final class BucketWritePipeline implements AutoCloseable {
                 sleepQuiet(20);
             }
             if (!running.get()) {
+                onDroppedWhenStopped();
                 return;
             }
             int bucket = router.route(event);
@@ -121,6 +129,7 @@ public final class BucketWritePipeline implements AutoCloseable {
             if (ddlBarrier.get() || !running.get()) {
                 inflight.decrementAndGet();
                 if (!running.get()) {
+                    onDroppedWhenStopped();
                     return;
                 }
                 continue;
@@ -245,17 +254,53 @@ public final class BucketWritePipeline implements AutoCloseable {
         return Math.max(1024, v);
     }
 
+    public long droppedWhenStopped() {
+        return droppedWhenStopped.get();
+    }
+
+    private void onDroppedWhenStopped() {
+        long n = droppedWhenStopped.incrementAndGet();
+        if (dropWarned.compareAndSet(false, true)) {
+            System.err.println("[mongo-sync] pipeline offer dropped while stopped ns=" + sourceNs
+                    + " (further drops counted, first warn)");
+        } else if (n == 10L || n == 100L || n == 1000L || (n % 10000L) == 0L) {
+            System.err.println("[mongo-sync] pipeline offer droppedWhileStopped=" + n + " ns=" + sourceNs);
+        }
+    }
+
     @Override
     public void close() {
         running.set(false);
-        waitDrained(Math.max(ddlWaitSeconds, 30));
+        // 超时也不抛：必须继续 shutdown Disruptor + 最终 flush，避免收尾被跳过
+        tryDrainQuiet(Math.max(ddlWaitSeconds, 30));
         for (Disruptor<TransferEventSlot> disruptor : disruptors) {
             try {
                 disruptor.shutdown(10, TimeUnit.SECONDS);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                System.err.println("[mongo-sync] disruptor shutdown: " + e.getMessage());
             }
         }
-        sink.flushAndWait();
+        try {
+            sink.flushAndWait();
+        } catch (Exception e) {
+            System.err.println("[mongo-sync] pipeline final flush: " + e.getMessage());
+        }
+        long dropped = droppedWhenStopped.get();
+        if (dropped > 0L) {
+            System.err.println("[mongo-sync] pipeline closed with droppedWhileStopped=" + dropped
+                    + " ns=" + sourceNs);
+        }
+    }
+
+    private void tryDrainQuiet(int timeoutSeconds) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(Math.max(1, timeoutSeconds));
+        while (inflight.get() > 0 && System.nanoTime() < deadline) {
+            sleepQuiet(50);
+        }
+        if (inflight.get() > 0) {
+            System.err.println("[mongo-sync] pipeline close drain timeout inflight=" + inflight.get()
+                    + " ns=" + sourceNs + "; continuing shutdown");
+        }
     }
 
     public static void probeUniqueIndexes(MongoClient sourceClient,
@@ -290,7 +335,8 @@ public final class BucketWritePipeline implements AutoCloseable {
     private final class BucketHandler implements EventHandler<TransferEventSlot> {
 
         private final int bucketId;
-        private final Set<String> seenIdsSinceFlush = new HashSet<String>();
+        /** 本桶尚未确认落库的 _id → 写入序号；随 {@link MongoSinkClient#landedThrough()} 裁剪，有界。 */
+        private final Map<String, Long> pendingIds = new HashMap<String, Long>();
 
         private BucketHandler(int bucketId) {
             this.bucketId = bucketId;
@@ -305,14 +351,18 @@ public final class BucketWritePipeline implements AutoCloseable {
                     return;
                 }
                 String id = IdBucketRouter.extractId(event);
-                if (id != null && seenIdsSinceFlush.contains(id)) {
-                    sink.flushAndWait();
-                    seenIdsSinceFlush.clear();
-                }
-                sink.write(event);
                 if (id != null) {
-                    seenIdsSinceFlush.add(id);
+                    Long prevSeq = pendingIds.get(id);
+                    if (prevSeq != null && prevSeq.longValue() > sink.landedThrough()) {
+                        sink.flushAndWait();
+                        prunePendingIds();
+                    }
                 }
+                long seq = sink.write(event);
+                if (id != null && seq > 0L) {
+                    pendingIds.put(id, Long.valueOf(seq));
+                }
+                prunePendingIds();
             } catch (Exception e) {
                 if (writeErrorHandler != null) {
                     try {
@@ -326,9 +376,23 @@ public final class BucketWritePipeline implements AutoCloseable {
                     sink.flushAndWait();
                 } catch (Exception ignored) {
                 }
-                seenIdsSinceFlush.clear();
+                pendingIds.clear();
             } finally {
                 inflight.decrementAndGet();
+            }
+        }
+
+        private void prunePendingIds() {
+            long landed = sink.landedThrough();
+            if (pendingIds.isEmpty() || landed <= 0L) {
+                return;
+            }
+            Iterator<Map.Entry<String, Long>> it = pendingIds.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Long> entry = it.next();
+                if (entry.getValue().longValue() <= landed) {
+                    it.remove();
+                }
             }
         }
     }

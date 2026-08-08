@@ -44,6 +44,10 @@ public abstract class AbstractSourceListener implements SourceListener {
     protected final MongoSourceConfig config;
     protected final AtomicBoolean running = new AtomicBoolean(false);
     protected final AtomicBoolean stopped = new AtomicBoolean(false);
+    /** pause 后为 true；resume 时只续读增量，不重跑全量、不清位点。 */
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+    /** 首次全量（若配置）已完成；resume 依赖此标志。 */
+    private final AtomicBoolean initialSyncFinished = new AtomicBoolean(false);
     /**
      * 增量侧识别到本表 ns 失效（drop / rename / dropDatabase）时置位：全量扫描视为完成并尽快退出。
      */
@@ -72,30 +76,72 @@ public abstract class AbstractSourceListener implements SourceListener {
         if (stopped.get()) {
             throw new IllegalStateException("CDC listener already stopped");
         }
+        if (paused.compareAndSet(true, false)) {
+            launchCoordinator(true);
+            return;
+        }
         if (running.compareAndSet(false, true)) {
-            startOffsetLogHeartbeat();
-            coordinatorExecutor = Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, listenerThreadName());
-                t.setPriority(config.getListenerThreadPriority());
-                return t;
-            });
+            launchCoordinator(false);
+        }
+    }
 
-            coordinatorExecutor.submit(new Runnable() {
-                @Override
-                public void run() {
-                    try {
+    private void launchCoordinator(final boolean resume) {
+        startOffsetLogHeartbeat();
+        coordinatorExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, listenerThreadName());
+            t.setPriority(config.getListenerThreadPriority());
+            return t;
+        });
+        coordinatorExecutor.submit(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (resume) {
+                        runResumeCapture();
+                    } else {
                         runCapture();
-                    } catch (SourceHistoryLostException | SourceConnectException | SourceOffsetException e) {
-                        logOffsetSnapshot("fatal");
-                        running.set(false);
-                        throw e;
-                    } catch (Exception e) {
-                        logOffsetSnapshot("fatal");
-                        running.set(false);
-                        throw new SourceConnectException("Failed to start CDC listener", e);
                     }
+                } catch (SourceHistoryLostException | SourceConnectException | SourceOffsetException e) {
+                    logOffsetSnapshot("fatal");
+                    running.set(false);
+                    throw e;
+                } catch (Exception e) {
+                    logOffsetSnapshot("fatal");
+                    running.set(false);
+                    throw new SourceConnectException(
+                            resume ? "Failed to resume CDC listener" : "Failed to start CDC listener", e);
                 }
-            });
+            }
+        });
+    }
+
+    /**
+     * pause 后的 resume：从持久化位点续读增量，不重跑 {@link #beforeInitialSync()} / 全量扫描。
+     */
+    private void runResumeCapture() throws Exception {
+        if (!running.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            boolean needFull = config.getSyncMode().includesFull();
+            boolean needInc = config.getSyncMode().includesIncremental();
+            if (needInc) {
+                if (needFull && !initialSyncFinished.get()) {
+                    paused.set(true);
+                    throw new IllegalStateException(
+                            "cannot resume before initial full sync completes");
+                }
+                startIncremental();
+                return;
+            }
+            if (needFull) {
+                beforeInitialSync();
+                performInitialSync();
+                onInitialSyncCompleted();
+                runAfterFullSyncBarrier();
+            }
+        } finally {
+            running.set(false);
         }
     }
 
@@ -126,6 +172,7 @@ public abstract class AbstractSourceListener implements SourceListener {
             });
             try {
                 performInitialSync();
+                markInitialSyncFinished();
                 onInitialSyncCompleted();
                 runAfterFullSyncBarrier();
                 incrementalFuture.get();
@@ -140,6 +187,7 @@ public abstract class AbstractSourceListener implements SourceListener {
         if (needFull) {
             beforeInitialSync();
             performInitialSync();
+            markInitialSyncFinished();
             onInitialSyncCompleted();
             runAfterFullSyncBarrier();
             running.set(false);
@@ -147,6 +195,7 @@ public abstract class AbstractSourceListener implements SourceListener {
         }
 
         if (needInc) {
+            markInitialSyncFinished();
             startIncremental();
         } else {
             running.set(false);
@@ -156,15 +205,7 @@ public abstract class AbstractSourceListener implements SourceListener {
     @Override
     public void stop() {
         if (stopped.compareAndSet(false, true)) {
-            running.set(false);
-            logOffsetSnapshot("stop");
-
-            shutdownExecutor(offsetLogScheduler);
-            shutdownExecutor(incrementalExecutor);
-            shutdownExecutor(coordinatorExecutor);
-            offsetLogScheduler = null;
-            incrementalExecutor = null;
-            coordinatorExecutor = null;
+            pauseInternal("stop");
 
             if (ownsMongoClient && mongoClient != null) {
                 try {
@@ -174,6 +215,27 @@ public abstract class AbstractSourceListener implements SourceListener {
                 mongoClient = null;
             }
         }
+    }
+
+    @Override
+    public void pause() {
+        if (stopped.get()) {
+            throw new IllegalStateException("CDC listener already stopped");
+        }
+        pauseInternal("pause");
+    }
+
+    private void pauseInternal(String reason) {
+        paused.set(true);
+        running.set(false);
+        logOffsetSnapshot(reason);
+
+        shutdownExecutor(offsetLogScheduler);
+        shutdownExecutor(incrementalExecutor);
+        shutdownExecutor(coordinatorExecutor);
+        offsetLogScheduler = null;
+        incrementalExecutor = null;
+        coordinatorExecutor = null;
     }
 
     private static void shutdownExecutor(ExecutorService executor) {
@@ -256,6 +318,15 @@ public abstract class AbstractSourceListener implements SourceListener {
     protected abstract String listenerThreadName();
 
     protected abstract void startIncremental();
+
+    /** 首次全量（若配置）是否已完成；增量 resume 应从此后持久化位点续读。 */
+    protected final boolean isInitialSyncFinished() {
+        return initialSyncFinished.get();
+    }
+
+    private void markInitialSyncFinished() {
+        initialSyncFinished.set(true);
+    }
 
     /**
      * 全量快照开始前钩子：记录增量起点（须在启动并行增量之前调用）。

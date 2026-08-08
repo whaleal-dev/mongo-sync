@@ -6,6 +6,7 @@ package com.whaleal.third.mongo.sync.sdk;
 public enum MigrationState {
     IDLE,
     RUNNING,
+    PAUSED,
     CAN_COMMIT,
     COMMITTING,
     COMMITTED,

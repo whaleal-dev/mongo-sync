@@ -7,6 +7,8 @@ import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
+import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.sdk.MigrationProgress;
 import com.whaleal.third.mongo.sync.sdk.MongoMultiSyncClient;
 import com.whaleal.third.mongo.sync.sdk.MongoSyncClient;
@@ -45,6 +47,9 @@ public final class SyncMain {
         int code = 2;
         try {
             code = run(args);
+        } catch (MongoSyncException e) {
+            System.err.println("[mongo-sync] ERROR code=" + e.getCode() + " message=" + e.getMessage());
+            code = 2;
         } catch (Exception e) {
             System.err.println("[mongo-sync] ERROR " + e.getMessage());
             e.printStackTrace(System.err);
@@ -55,6 +60,7 @@ public final class SyncMain {
 
     static int run(String[] args) throws Exception {
         Properties props = loadArgs(args);
+        validateStartupProps(props);
         String sourceUri = req(props, "source.uri");
         String targetUri = req(props, "target.uri");
 
@@ -62,8 +68,12 @@ public final class SyncMain {
                 || hasText(props.getProperty("namespace.black"));
         final boolean autoCommitWhenReady = bool(props, "commit.when.ready", false);
         final int progressLogSeconds = integer(props, "progress.log.interval.seconds", 10);
+        final boolean httpEnabled = bool(props, "http.enabled", false);
+        final String httpHost = get(props, "http.host", "127.0.0.1");
+        final int httpPort = integer(props, "http.port", 27182);
 
         final AtomicReference<AutoCloseable> clientRef = new AtomicReference<AutoCloseable>();
+        final AtomicReference<SyncHttpServer> httpServerRef = new AtomicReference<SyncHttpServer>();
         final CountDownLatch stop = new CountDownLatch(1);
         final ScheduledExecutorService progressExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "mongo-sync-progress");
@@ -83,6 +93,14 @@ public final class SyncMain {
                         System.err.println("[mongo-sync] close error: " + e.getMessage());
                     }
                 }
+                SyncHttpServer http = httpServerRef.get();
+                if (http != null) {
+                    try {
+                        http.close();
+                    } catch (Exception e) {
+                        System.err.println("[mongo-sync] http close error: " + e.getMessage());
+                    }
+                }
                 progressExecutor.shutdownNow();
                 stop.countDown();
             }
@@ -97,6 +115,19 @@ public final class SyncMain {
                     + " syncMode=" + get(props, "sync.mode", "FULL_AND_INCREMENTAL")
                     + " capture=" + get(props, "capture.mode", "AUTO"));
             multiClient.start();
+            if (httpEnabled) {
+                httpServerRef.set(SyncHttpServer.start(
+                        httpHost,
+                        httpPort,
+                        () -> multiClient.progress(),
+                        () -> multiClient.pause(),
+                        () -> {
+                            multiClient.resume();
+                            return multiClient.progress();
+                        },
+                        () -> multiClient.commit()));
+                System.err.println("[mongo-sync] http control listening at http://" + httpHost + ":" + httpPort);
+            }
             scheduleProgress(progressExecutor, progressLogSeconds, stop, autoCommitWhenReady, multiClient);
         } else {
             MongoSyncClient sync = MongoSyncClient.create(buildSingle(props, sourceUri, targetUri));
@@ -110,6 +141,19 @@ public final class SyncMain {
                     + " topology=" + sync.getSourceTopology()
                     + " resolvedCapture=" + sync.getResolvedCaptureMode());
             sync.start();
+            if (httpEnabled) {
+                httpServerRef.set(SyncHttpServer.start(
+                        httpHost,
+                        httpPort,
+                        () -> sync.progress(),
+                        () -> sync.pause(),
+                        () -> {
+                            sync.resume();
+                            return sync.progress();
+                        },
+                        () -> sync.commit()));
+                System.err.println("[mongo-sync] http control listening at http://" + httpHost + ":" + httpPort);
+            }
             scheduleProgress(progressExecutor, progressLogSeconds, stop, autoCommitWhenReady, sync);
         }
 
@@ -132,10 +176,10 @@ public final class SyncMain {
             public void run() {
                 try {
                     MigrationProgress p = sync.progress();
-                    System.err.println("[mongo-sync] progress " + p);
+                    System.err.println("[mongo-sync] progress " + formatProgress(p));
                     if (autoCommitWhenReady && p.isCanCommit()) {
                         MigrationProgress committed = sync.commit();
-                        System.err.println("[mongo-sync] committed " + committed);
+                        System.err.println("[mongo-sync] committed " + formatProgress(committed));
                         stop.countDown();
                     }
                 } catch (Exception e) {
@@ -158,10 +202,10 @@ public final class SyncMain {
             public void run() {
                 try {
                     MigrationProgress p = sync.progress();
-                    System.err.println("[mongo-sync] progress " + p);
+                    System.err.println("[mongo-sync] progress " + formatProgress(p));
                     if (autoCommitWhenReady && p.isCanCommit()) {
                         MigrationProgress committed = sync.commit();
-                        System.err.println("[mongo-sync] committed " + committed);
+                        System.err.println("[mongo-sync] committed " + formatProgress(committed));
                         stop.countDown();
                     }
                 } catch (Exception e) {
@@ -169,6 +213,69 @@ public final class SyncMain {
                 }
             }
         }, intervalSeconds, intervalSeconds, TimeUnit.SECONDS);
+    }
+
+    private static String formatProgress(MigrationProgress p) {
+        StringBuilder sb = new StringBuilder();
+        appendKv(sb, "ns", p.getNamespace());
+        appendKv(sb, "phase", p.getPhase());
+        appendKv(sb, "state", String.valueOf(p.getState()));
+        appendKv(sb, "mode", p.getSyncMode());
+        appendKv(sb, "capture", p.getCaptureMode());
+        appendKv(sb, "topology", p.getTopology());
+        appendKv(sb, "fullCopied", String.valueOf(p.getCopiedDocuments()));
+        if (p.getEstimatedTotalDocuments() > 0) {
+            appendKv(sb, "fullEstimated", String.valueOf(p.getEstimatedTotalDocuments()));
+            appendKv(sb, "fullPercent", String.valueOf(p.getFullSyncPercent()));
+            appendKv(sb, "fullRemaining", String.valueOf(p.getRemainingDocumentsEstimate()));
+        }
+        appendKv(sb, "incrEvents", String.valueOf(p.getIncrementalEvents()));
+        appendKv(sb, "ddlEvents", String.valueOf(p.getDdlEvents()));
+        appendKv(sb, "inflight", String.valueOf(p.getInflightEvents()));
+        if (p.getLagMs() != null) {
+            appendKv(sb, "lagMs", String.valueOf(p.getLagMs()));
+        }
+        appendKv(sb, "canCommit", String.valueOf(p.isCanCommit()));
+        appendKv(sb, "readiness", p.getCommitReadiness());
+        if (p.getElapsedMs() > 0) {
+            appendKv(sb, "elapsedMs", String.valueOf(p.getElapsedMs()));
+        }
+        if (p.getNamespaceCount() > 1) {
+            appendKv(sb, "namespaces", String.valueOf(p.getNamespaceCount()));
+        }
+        if (p.getDetail() != null && !p.getDetail().isEmpty()) {
+            appendKv(sb, "detail", p.getDetail());
+        }
+        return sb.toString();
+    }
+
+    private static void appendKv(StringBuilder sb, String key, String value) {
+        if (key == null || key.isEmpty() || value == null || value.isEmpty()) {
+            return;
+        }
+        if (sb.length() > 0) {
+            sb.append(' ');
+        }
+        sb.append(key).append('=').append(normalizeLogValue(value));
+    }
+
+    private static String normalizeLogValue(String value) {
+        String v = value.trim();
+        if (v.isEmpty()) {
+            return "\"\"";
+        }
+        boolean simple = true;
+        for (int i = 0; i < v.length(); i++) {
+            char c = v.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == '.' || c == ':' || c == '/' || c == '(' || c == ')')) {
+                simple = false;
+                break;
+            }
+        }
+        if (simple) {
+            return v;
+        }
+        return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private static MongoSyncConfig.Builder buildSingle(Properties props, String sourceUri, String targetUri) {
@@ -184,14 +291,13 @@ public final class SyncMain {
                 .sourceCollection(scoll)
                 .targetDatabase(tdb)
                 .targetCollection(tcoll)
-                .captureMode(CaptureMode.valueOf(get(props, "capture.mode", "AUTO").toUpperCase()))
-                .syncMode(SyncMode.valueOf(get(props, "sync.mode", "FULL_AND_INCREMENTAL").toUpperCase()))
-                .fullDocument(MongoSourceConfig.FullDocumentMode.valueOf(
-                        get(props, "full.document", "DEFAULT").toUpperCase()))
+                .captureMode(parseCaptureMode(props))
+                .syncMode(parseSyncMode(props))
+                .fullDocument(parseFullDocument(props))
                 .enablePreImage(bool(props, "enable.pre.image", false))
                 .includeFromMigrate(bool(props, "include.from.migrate", false))
-                .writeMode(WriteMode.valueOf(get(props, "write.mode", "UPSERT").toUpperCase()))
-                .onConflict(OnConflict.valueOf(get(props, "on.conflict", "FAIL").toUpperCase()))
+                .writeMode(parseWriteMode(props))
+                .onConflict(parseOnConflict(props))
                 .targetBatchSize(integer(props, "target.batch.size", 1000))
                 .targetWriterThreads(integer(props, "target.writer.threads", 8))
                 .bucketNum(integer(props, "bucket.num", 16))
@@ -205,6 +311,7 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override
                     public void onWriteError(int bucketId, com.whaleal.third.mongo.transfer.model.TransferEvent event,
@@ -222,14 +329,7 @@ public final class SyncMain {
         if (hasText(mongoVersion)) {
             b.mongoVersion(mongoVersion.trim());
         }
-        String oplogUris = props.getProperty("source.oplog.uris");
-        if (hasText(oplogUris)) {
-            b.sourceOplogUrisSemicolon(oplogUris.trim());
-        }
-        String shardNames = props.getProperty("source.oplog.shard.names");
-        if (hasText(shardNames)) {
-            b.sourceOplogShardNames(shardNames.trim().split("\\s*;\\s*"));
-        }
+        rejectRemovedShardOplogKeys(props);
         return b;
     }
 
@@ -240,14 +340,13 @@ public final class SyncMain {
                 .namespaceWhite(props.getProperty("namespace.white"))
                 .namespaceBlack(props.getProperty("namespace.black"))
                 .namespaceTransform(props.getProperty("namespace.transform"))
-                .captureMode(CaptureMode.valueOf(get(props, "capture.mode", "AUTO").toUpperCase()))
-                .syncMode(SyncMode.valueOf(get(props, "sync.mode", "FULL_AND_INCREMENTAL").toUpperCase()))
-                .fullDocument(MongoSourceConfig.FullDocumentMode.valueOf(
-                        get(props, "full.document", "DEFAULT").toUpperCase()))
+                .captureMode(parseCaptureMode(props))
+                .syncMode(parseSyncMode(props))
+                .fullDocument(parseFullDocument(props))
                 .enablePreImage(bool(props, "enable.pre.image", false))
                 .includeFromMigrate(bool(props, "include.from.migrate", false))
-                .writeMode(WriteMode.valueOf(get(props, "write.mode", "UPSERT").toUpperCase()))
-                .onConflict(OnConflict.valueOf(get(props, "on.conflict", "FAIL").toUpperCase()))
+                .writeMode(parseWriteMode(props))
+                .onConflict(parseOnConflict(props))
                 .targetBatchSize(integer(props, "target.batch.size", 1000))
                 .targetWriterThreads(integer(props, "target.writer.threads", 8))
                 .bucketNum(integer(props, "bucket.num", 16))
@@ -261,6 +360,7 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override
                     public void onWriteError(int bucketId, com.whaleal.third.mongo.transfer.model.TransferEvent event,
@@ -278,21 +378,29 @@ public final class SyncMain {
         if (hasText(mongoVersion)) {
             b.mongoVersion(mongoVersion.trim());
         }
-        String oplogUris = props.getProperty("source.oplog.uris");
-        if (hasText(oplogUris)) {
-            b.sourceOplogUrisSemicolon(oplogUris.trim());
-        }
-        String shardNames = props.getProperty("source.oplog.shard.names");
-        if (hasText(shardNames)) {
-            b.sourceOplogShardNames(shardNames.trim().split("\\s*;\\s*"));
-        }
+        rejectRemovedShardOplogKeys(props);
         return b;
+    }
+
+    /**
+     * 多分片 OPLOG 已下线：分片集群增量统一走 ChangeStream@mongos。
+     * 老配置若仍带这些键，直接失败而不是被静默忽略。
+     */
+    private static void rejectRemovedShardOplogKeys(Properties props) {
+        for (String key : new String[]{"source.oplog.uris", "source.oplog.shard.names"}) {
+            if (hasText(props.getProperty(key))) {
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                        key + " has been removed: multi-shard OPLOG is no longer supported. "
+                                + "Use captureMode=CHANGE_STREAM against mongos (MongoDB 3.6+), "
+                                + "or run one task per shard replica set");
+            }
+        }
     }
 
     private static Properties loadArgs(String[] args) throws Exception {
         Properties props = new Properties();
         if (args == null || args.length == 0) {
-            throw new IllegalArgumentException(
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                     "usage: SyncMain <properties-file> | SyncMain --config <file>");
         }
         if (args.length == 1 && !args[0].startsWith("--")) {
@@ -326,7 +434,7 @@ public final class SyncMain {
             } else if ("--progress-log-seconds".equals(a) && i + 1 < args.length) {
                 props.setProperty("progress.log.interval.seconds", args[++i]);
             } else {
-                throw new IllegalArgumentException("unknown arg: " + a);
+                throw new MongoSyncException(MongoSyncErrorCode.ARGUMENT_UNKNOWN, "unknown arg: " + a);
             }
         }
         return props;
@@ -334,10 +442,92 @@ public final class SyncMain {
 
     private static void loadFile(Properties props, Path path) throws Exception {
         if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("config file not found: " + path.toAbsolutePath());
+            throw new MongoSyncException(MongoSyncErrorCode.FILE_NOT_FOUND,
+                    "config file not found: " + path.toAbsolutePath());
         }
         try (InputStream in = Files.newInputStream(path)) {
             props.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+        }
+    }
+
+    private static void validateStartupProps(Properties props) {
+        req(props, "source.uri");
+        req(props, "target.uri");
+
+        boolean multi = hasText(props.getProperty("namespace.white"))
+                || hasText(props.getProperty("namespace.black"));
+        if (multi) {
+            if (hasText(props.getProperty("source.database")) || hasText(props.getProperty("source.collection"))) {
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                        "multi-sync uses namespace.white/namespace.black; do not mix source.database/source.collection");
+            }
+        } else {
+            req(props, "source.database");
+            req(props, "source.collection");
+        }
+
+        parseCaptureMode(props);
+        parseSyncMode(props);
+        parseFullDocument(props);
+        parseWriteMode(props);
+        parseOnConflict(props);
+
+        int progressLogSeconds = integer(props, "progress.log.interval.seconds", 10);
+        if (progressLogSeconds < 0) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "progress.log.interval.seconds must be >= 0");
+        }
+        int batchSize = integer(props, "target.batch.size", 1000);
+        int writerThreads = integer(props, "target.writer.threads", 8);
+        int bucketNum = integer(props, "bucket.num", 16);
+        if (batchSize <= 0 || writerThreads <= 0 || bucketNum <= 0) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "target.batch.size, target.writer.threads, bucket.num must be > 0");
+        }
+    }
+
+    private static CaptureMode parseCaptureMode(Properties props) {
+        try {
+            return CaptureMode.valueOf(get(props, "capture.mode", "AUTO").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid capture.mode, expected AUTO|CHANGE_STREAM|OPLOG", e);
+        }
+    }
+
+    private static SyncMode parseSyncMode(Properties props) {
+        try {
+            return SyncMode.valueOf(get(props, "sync.mode", "FULL_AND_INCREMENTAL").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid sync.mode, expected FULL|FULL_AND_INCREMENTAL|FULL_AND_CATCH_UP|INCREMENTAL", e);
+        }
+    }
+
+    private static MongoSourceConfig.FullDocumentMode parseFullDocument(Properties props) {
+        try {
+            return MongoSourceConfig.FullDocumentMode.valueOf(get(props, "full.document", "DEFAULT").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid full.document value", e);
+        }
+    }
+
+    private static WriteMode parseWriteMode(Properties props) {
+        try {
+            return WriteMode.valueOf(get(props, "write.mode", "UPSERT").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid write.mode, expected STRICT|UPSERT", e);
+        }
+    }
+
+    private static OnConflict parseOnConflict(Properties props) {
+        try {
+            return OnConflict.valueOf(get(props, "on.conflict", "FAIL").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid on.conflict, expected FAIL|SKIP|UPSERT", e);
         }
     }
 
@@ -348,7 +538,7 @@ public final class SyncMain {
     private static String req(Properties p, String key) {
         String v = p.getProperty(key);
         if (v == null || v.trim().isEmpty()) {
-            throw new IllegalArgumentException("missing required: " + key);
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED, "missing required: " + key);
         }
         return v.trim();
     }
@@ -363,7 +553,25 @@ public final class SyncMain {
         if (v == null || v.trim().isEmpty()) {
             return def;
         }
-        return Integer.parseInt(v.trim());
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid integer for " + key + ": " + v, e);
+        }
+    }
+
+    private static long longProp(Properties p, String key, long def) {
+        String v = p.getProperty(key);
+        if (v == null || v.trim().isEmpty()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid long for " + key + ": " + v, e);
+        }
     }
 
     private static boolean bool(Properties p, String key, boolean def) {

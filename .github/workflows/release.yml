@@ -1,0 +1,53 @@
+name: Release Branch Publish
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: maven
+
+      - name: Build release bundle
+        run: ./bin/package.sh
+
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION="$(awk -F'[<>]' '/<version>/{print $3; exit}' pom.xml)"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG="release-${VERSION}-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          NAME="mongo-sync ${VERSION} release build ${GITHUB_RUN_NUMBER}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            dist/mongo-sync-${{ steps.meta.outputs.version }}.tar.gz
+            dist/lib/mongo-sync-all.jar
