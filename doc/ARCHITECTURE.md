@@ -66,9 +66,10 @@ MongoSourceClient
 | Caffeine ns 锁 / 唯一索引（启动探测一次） | ✅ |
 | 启动前表结构预建（`bootstrapCollection` / `bootstrapIndexes` 可分别开关） | ✅ |
 | 多库表白/黑名单 + ns 变换（`MongoMultiSyncClient`） | ✅ |
-| 分片 OPLOG 多源端（`sourceOplogUris`，每 shard 拉 oplog） | ✅ |
+| 分片增量 ChangeStream@mongos（≥3.6；多分片 OPLOG 已移除） | ✅ |
+| `canCommit` + `commit.max.lag.ms` | ✅ |
 | 数据比对校验（`VerifyMain`：COUNT/ID/FULL） | ✅ |
-| 位点文件持久化（`offsetStoreDir`，按 ns[/shard]） | ✅ |
+| 位点文件持久化（`offsetStoreDir`，按 ns） | ✅ |
 | 位点周期心跳日志 | ✅ |
 | 大表全量并行读（`fullSyncParallelism`，对齐 d2t `_id` 切段） | ✅ |
 | Java 8 编译 | ✅（Caffeine 2.9.3 / Disruptor 3.4.4） |
@@ -80,7 +81,7 @@ MongoSourceClient
 | 中 | 写失败默认仅 stderr | 已提供 `SyncWriteErrorHandler`；未注入时仍只打 stderr，**不自动重试** |
 | 中 | 位点在 Source 回调后即保存 | Sync 异步写入时，崩溃可能丢未落库事件；严格场景需「写成功再记位点」 |
 | 中 | ChangeStream 集合级 watch | 多表时每表独立 watch；`dropDatabase` 等库级事件可能收不全；Oplog 更完整 |
-| 中 | 分片 orphan / balancer | 多源 OPLOG 已支持；未做 orphan 文档过滤；`includeFromMigrate` 可控 fromMigrate |
+| 中 | 分片 orphan / balancer | 分片增量走 ChangeStream@mongos；未做 orphan 文档过滤；`includeFromMigrate` 可控 fromMigrate |
 | 低 | ≥7.0 禁 Oplog | 已构建期校验，须 ChangeStream |
 | 低 | 同 ns 跨批异步写 | 默认 8 写线程；同 `_id` 靠分桶内 `flushAndWait`；不同 ns 可并发 |
 | — | ~~单集合同步~~ | 已补：`MongoMultiSyncClient` 白名单多表 |

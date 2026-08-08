@@ -75,7 +75,7 @@ public final class FullSyncRangeSplitter {
                 idClause.put(isMax ? "$lte" : "$lt", max);
             }
             if (idClause.isEmpty()) {
-                return new BsonDocument();
+                return new Document();
             }
             return new Document("_id", idClause);
         }

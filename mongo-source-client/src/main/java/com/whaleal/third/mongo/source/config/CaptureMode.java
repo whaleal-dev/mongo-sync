@@ -9,8 +9,9 @@ public enum CaptureMode {
      * 按源端架构 + 版本 + SyncMode 自动匹配（见 {@link com.whaleal.third.mongo.source.topology.SourceTopologyDetector}）。
      * <ul>
      *   <li>全量：standalone / 副本集 / mongos 均可集合扫描</li>
-     *   <li>增量 OPLOG：仅副本集或各 shard mongod（禁止 standalone / mongos）</li>
-     *   <li>增量 ChangeStream：副本集或 mongos（禁止 standalone 增量）</li>
+     *   <li>副本集增量：≥3.6 优先 ChangeStream，更低版本回落 OPLOG</li>
+     *   <li>分片增量：仅 ChangeStream@mongos（≥3.6）；不再提供多分片 OPLOG</li>
+     *   <li>standalone：仅支持全量</li>
      * </ul>
      */
     AUTO,
@@ -21,8 +22,8 @@ public enum CaptureMode {
     CHANGE_STREAM,
 
     /**
-     * {@code local.oplog.rs}：可读副本集、分片的某个 shard；不可读 standalone / mongos。
-     * 分片场景由 Sync 自动 {@code listShards} 多源拉取。MongoDB ≥7.0 禁止。
+     * {@code local.oplog.rs}：仅可读单个副本集（含独立部署的 shard 副本集）；
+     * 不可读 standalone / mongos。分片集群请用 {@link #CHANGE_STREAM}。MongoDB ≥7.0 禁止。
      */
     OPLOG
 }

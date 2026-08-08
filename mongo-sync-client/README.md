@@ -132,7 +132,7 @@ multi.start();
 | `namespaceWhite` / `namespaceBlack` | 库或 `db.coll`，分号分隔，互斥 |
 | `namespaceTransform` | `src.ns:tgt.ns` 映射 |
 | `offsetStoreDir` | 文件位点（单表 `MongoSyncClient` 同样支持） |
-| `sourceOplogUris` | 分片 OPLOG 多源（每 shard 一条）；**可不配**，`captureMode=OPLOG` 时自动 `listShards` |
+| `commitMaxLagMs` | `canCommit` 允许的最大增量滞后（默认 10000ms） |
 | `captureMode` | 默认 `AUTO`：按源端架构匹配读任务 |
 
 ### 源端架构自动匹配读任务
@@ -142,41 +142,23 @@ multi.start();
 | 架构 | 全量 | 增量 OPLOG | 增量 ChangeStream |
 |------|------|------------|-------------------|
 | **standalone** | ✅ | ❌ | ❌（仅 `syncMode=FULL`） |
-| **replicaSet** | ✅ | ✅（直连 mongod/RS） | ✅ |
-| **sharding** | ✅（mongos） | ✅（各 **shard**，禁 mongos） | ✅（mongos） |
+| **replicaSet** | ✅ | ✅（&lt;3.6 或显式 OPLOG） | ✅（≥3.6 默认） |
+| **sharding** | ✅（mongos） | ❌（不可读 mongos；不再多分片 OPLOG） | ✅（mongos，≥3.6） |
 
-`captureMode=AUTO` 默认：副本集 → ChangeStream；分片 → ChangeStream@mongos（mongos 已做跨分片归并与全局定序）；仅当服务端 &lt; 3.6 不支持 ChangeStream 时才回退到全量@mongos + 各 shard OPLOG。
-
-> 多分片 OPLOG 由各 shard 独立读取，**没有全局序**：同一条 DDL 会在每个 shard 各出现一次，且可能与其他 shard 的 CRUD 乱序（如先删表后插入）。需要该模式请显式配置 `captureMode=OPLOG`。
+`captureMode=AUTO` 默认：副本集 ≥3.6 → ChangeStream，更低版本 → OPLOG；分片 → 仅 ChangeStream@mongos；分片 + MongoDB &lt;3.6 不支持增量（可用 `syncMode=FULL`，或对每个 shard 副本集单独建任务）。
 
 ```java
-// 推荐：不手配 capture / shard URI，连 mongos 即可
+// 推荐：不手配 capture，连 mongos 即可（分片增量走 ChangeStream）
 MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
         .sourceUri("mongodb://mongos:27017")
         .targetUri("mongodb://target:27017")
         .mapCollection("demo", "orders")
         .syncMode(SyncMode.FULL_AND_INCREMENTAL)
         .captureMode(CaptureMode.AUTO)   // 默认即可省略
+        .commitMaxLagMs(10_000L)
         .offsetStoreDir("./data/offsets")
         .writeErrorHandler((b, e, err) -> {}));
 System.err.println(sync.getSourceTopology() + " → " + sync.getResolvedCaptureMode());
-```
-
-### 分片 OPLOG（多源，可手动覆盖）
-
-```java
-MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
-        .sourceUri("mongodb://mongos:27017")           // 全量 / 元数据
-        .sourceOplogUris(
-                "mongodb://s0:27017/?replicaSet=rs0",
-                "mongodb://s1:27017/?replicaSet=rs1")
-        .sourceOplogShardNames("shard0", "shard1")
-        .captureMode(CaptureMode.OPLOG)
-        // .mongoVersion("4.4.29")  // 可省略，buildInfo 自动探测
-        .mapCollection("demo", "orders")
-        .syncMode(SyncMode.FULL_AND_INCREMENTAL)
-        .offsetStoreDir("./data/offsets")
-        .writeErrorHandler((b, e, err) -> {}));
 ```
 
 单表仍用 `MongoSyncClient` + `mapCollection` / `sourceDatabase`+`sourceCollection`。

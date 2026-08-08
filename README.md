@@ -25,7 +25,7 @@
 | 同构上云（DocumentDB / DDS） | 标准 Mongo 驱动写入协议兼容库，便于迁云 |
 | 迁库 / 扩容不停服 | 全量∥增量并行（`FULL_AND_INCREMENTAL`），UPSERT 兜底窗口重复 |
 | 跨架构互传 | 自动识别 standalone / 副本集 / 分片，匹配读任务（Oplog / ChangeStream） |
-| 分片集群增量 | mongos 拉全量；各 shard 并行拉 Oplog（可自动 `listShards`） |
+| 分片集群增量 | mongos 拉全量 + ChangeStream@mongos（MongoDB 3.6+；不再提供多分片 OPLOG） |
 | 大表全量加速 | 按 `_id` 切段多任务并行读（对齐 d2t 拆分思路） |
 | 结构一起走 | 启动预建集合 / 索引；运行中 DDL（删表、改名、建删索引）可落地 |
 | 写序与吞吐 | `_id` 分桶 + LMAX Disruptor 背压；唯一索引自动有序写 |
