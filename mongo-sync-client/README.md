@@ -19,7 +19,7 @@ Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。
 |-----|--------|
 | `_id.hashCode % bucketNum` | `IdBucketRouter` |
 | 唯一索引强制 bucket=1 | Caffeine `uniqueIndexCache` → bucket=0；Sink `ordered=true` |
-| 同桶同 `_id` 先 flush | 桶线程 `seenIdsSinceFlush`（对齐 bucketSetMap） |
+| 同桶同 `_id` 先 flush | 桶线程 `pendingIds`（`_id`→写入序号）；`landedThrough` 裁剪，有界；重复 `_id` 且前次未落库时 `flushAndWait` |
 | 表级 CAS 锁 `stateOfNsMap` | Caffeine `nsParseLocks` |
 | DDL 前等待在途 | `ddlBarrier` + `ddlWaitSeconds` 排空；DDL 后刷新唯一索引缓存 / Sink ordered；rename 后 Sink retarget |
 | WriteModel 分桶写 | **每桶 Disruptor**（RingBuffer + 单 Handler）→ `sink.write` |
@@ -132,7 +132,7 @@ multi.start();
 | `namespaceWhite` / `namespaceBlack` | 库或 `db.coll`，分号分隔，互斥 |
 | `namespaceTransform` | `src.ns:tgt.ns` 映射 |
 | `offsetStoreDir` | 文件位点（单表 `MongoSyncClient` 同样支持） |
-| `sourceOplogUris` | 分片 OPLOG 多源（每 shard 一条）；**可不配**，`AUTO`/`OPLOG` 时自动 `listShards` |
+| `sourceOplogUris` | 分片 OPLOG 多源（每 shard 一条）；**可不配**，`captureMode=OPLOG` 时自动 `listShards` |
 | `captureMode` | 默认 `AUTO`：按源端架构匹配读任务 |
 
 ### 源端架构自动匹配读任务
@@ -145,7 +145,9 @@ multi.start();
 | **replicaSet** | ✅ | ✅（直连 mongod/RS） | ✅ |
 | **sharding** | ✅（mongos） | ✅（各 **shard**，禁 mongos） | ✅（mongos） |
 
-`captureMode=AUTO` 默认：副本集 → ChangeStream；分片+增量+&lt;7 → 全量@mongos + shard OPLOG；≥7 → ChangeStream@mongos。
+`captureMode=AUTO` 默认：副本集 → ChangeStream；分片 → ChangeStream@mongos（mongos 已做跨分片归并与全局定序）；仅当服务端 &lt; 3.6 不支持 ChangeStream 时才回退到全量@mongos + 各 shard OPLOG。
+
+> 多分片 OPLOG 由各 shard 独立读取，**没有全局序**：同一条 DDL 会在每个 shard 各出现一次，且可能与其他 shard 的 CRUD 乱序（如先删表后插入）。需要该模式请显式配置 `captureMode=OPLOG`。
 
 ```java
 // 推荐：不手配 capture / shard URI，连 mongos 即可

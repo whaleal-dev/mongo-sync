@@ -44,7 +44,7 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 - **多库表**：白/黑名单、`ns` 变换（`MongoMultiSyncClient`）  
 - **元数据**：`bootstrapCollection` / `bootstrapIndexes` 可分别开关；支持跳过 TTL 索引  
 - **位点**：可选文件持久化（`offset.store.dir`）+ 周期心跳日志  
-- **迁移状态机**：`MigrationProgress` / `canCommit` / `commit`（第一版）  
+- **迁移状态机**：`MigrationProgress` / `canCommit` / `commit`；`canCommit` 要求全量完成、pipeline 排空，且增量滞后 ≤ `commit.max.lag.ms`（默认 10000）  
 - **校验**：`VerifyMain` 支持单表 / 多表白名单  
 
 ---

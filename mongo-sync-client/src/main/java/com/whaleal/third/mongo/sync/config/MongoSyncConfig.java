@@ -24,6 +24,8 @@ public class MongoSyncConfig {
     public static final int DEFAULT_DDL_WAIT_SECONDS = 30;
     public static final long DEFAULT_NS_LOCK_EXPIRE_MINUTES = 30;
 
+    public static final long DEFAULT_COMMIT_MAX_LAG_MS = 10_000L;
+
     private String sourceUri;
     private String targetUri;
     private MongoClient sourceMongoClient;
@@ -79,18 +81,8 @@ public class MongoSyncConfig {
     /** 单段全量任务目标体积（MB），默认 32。 */
     private int fullSyncTaskMbSize = MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
 
-    /**
-     * 分片 OPLOG 多源端 URI（每个 shard 副本集一条）。
-     * 非空且 {@link CaptureMode#OPLOG} 时：全量走 {@link #sourceUri}（通常 mongos），
-     * 增量并行拉各 shard 的 {@code local.oplog.rs}。
-     */
-    private java.util.List<String> sourceOplogUris = java.util.Collections.emptyList();
-    /** 分片 OPLOG 多源端已有 Client（与 uris 二选一或组合；Client 优先按序）。 */
-    private java.util.List<MongoClient> sourceOplogClients = java.util.Collections.emptyList();
-    /**
-     * 各分片位点文件后缀名（与 oplog 源一一对应）；缺省为 shard0、shard1…
-     */
-    private java.util.List<String> sourceOplogShardNames = java.util.Collections.emptyList();
+    /** 允许 commit 的最大增量滞后（毫秒）；仅含增量模式生效。 */
+    private long commitMaxLagMs = DEFAULT_COMMIT_MAX_LAG_MS;
 
     private MongoSyncConfig() {
     }
@@ -247,28 +239,8 @@ public class MongoSyncConfig {
         return fullSyncTaskMbSize;
     }
 
-    public java.util.List<String> getSourceOplogUris() {
-        return sourceOplogUris;
-    }
-
-    public java.util.List<MongoClient> getSourceOplogClients() {
-        return sourceOplogClients;
-    }
-
-    public java.util.List<String> getSourceOplogShardNames() {
-        return sourceOplogShardNames;
-    }
-
-    /** 是否配置了多个分片 OPLOG 源（或显式至少一个独立 oplog 源）。 */
-    public boolean hasShardedOplogSources() {
-        int n = 0;
-        if (sourceOplogClients != null) {
-            n += sourceOplogClients.size();
-        }
-        if (sourceOplogUris != null) {
-            n += sourceOplogUris.size();
-        }
-        return n > 0;
+    public long getCommitMaxLagMs() {
+        return commitMaxLagMs;
     }
 
     public String sourceNs() {
@@ -284,75 +256,6 @@ public class MongoSyncConfig {
 
         public Builder sourceUri(String sourceUri) {
             c.sourceUri = sourceUri;
-            return this;
-        }
-
-        /**
-         * 分片集群 OPLOG：每个 shard 副本集一条 URI（对齐 MongoShake 多源）。
-         * 全量/发现仍用 {@link #sourceUri}（建议 mongos）；增量并行读各 shard oplog。
-         */
-        public Builder sourceOplogUris(String... sourceOplogUris) {
-            if (sourceOplogUris == null || sourceOplogUris.length == 0) {
-                c.sourceOplogUris = java.util.Collections.emptyList();
-            } else {
-                java.util.List<String> list = new java.util.ArrayList<String>();
-                for (String u : sourceOplogUris) {
-                    if (u != null && !u.trim().isEmpty()) {
-                        list.add(u.trim());
-                    }
-                }
-                c.sourceOplogUris = java.util.Collections.unmodifiableList(list);
-            }
-            return this;
-        }
-
-        public Builder sourceOplogUris(java.util.List<String> sourceOplogUris) {
-            if (sourceOplogUris == null || sourceOplogUris.isEmpty()) {
-                c.sourceOplogUris = java.util.Collections.emptyList();
-            } else {
-                java.util.List<String> list = new java.util.ArrayList<String>();
-                for (String u : sourceOplogUris) {
-                    if (u != null && !u.trim().isEmpty()) {
-                        list.add(u.trim());
-                    }
-                }
-                c.sourceOplogUris = java.util.Collections.unmodifiableList(list);
-            }
-            return this;
-        }
-
-        /** 分号分隔：{@code mongodb://s1/?replicaSet=rs1;mongodb://s2/?replicaSet=rs2} */
-        public Builder sourceOplogUrisSemicolon(String semicolonUris) {
-            if (semicolonUris == null || semicolonUris.trim().isEmpty()) {
-                c.sourceOplogUris = java.util.Collections.emptyList();
-                return this;
-            }
-            return sourceOplogUris(semicolonUris.split(";"));
-        }
-
-        public Builder sourceOplogClients(java.util.List<MongoClient> sourceOplogClients) {
-            if (sourceOplogClients == null || sourceOplogClients.isEmpty()) {
-                c.sourceOplogClients = java.util.Collections.emptyList();
-            } else {
-                c.sourceOplogClients = java.util.Collections.unmodifiableList(
-                        new java.util.ArrayList<MongoClient>(sourceOplogClients));
-            }
-            return this;
-        }
-
-        /** 分片位点文件名后缀，与 oplog 源顺序对应；缺省 shard0、shard1… */
-        public Builder sourceOplogShardNames(String... names) {
-            if (names == null || names.length == 0) {
-                c.sourceOplogShardNames = java.util.Collections.emptyList();
-            } else {
-                java.util.List<String> list = new java.util.ArrayList<String>();
-                for (String n : names) {
-                    if (n != null && !n.trim().isEmpty()) {
-                        list.add(n.trim());
-                    }
-                }
-                c.sourceOplogShardNames = java.util.Collections.unmodifiableList(list);
-            }
             return this;
         }
 
@@ -599,6 +502,16 @@ public class MongoSyncConfig {
             return this;
         }
 
+        /**
+         * 允许 commit 的最大增量滞后（毫秒）。默认 10000。
+         * 仅 {@link SyncMode#includeIncremental()} 时参与 {@code canCommit} 判定。
+         */
+        public Builder commitMaxLagMs(long commitMaxLagMs) {
+            c.commitMaxLagMs = commitMaxLagMs > 0L
+                    ? commitMaxLagMs : DEFAULT_COMMIT_MAX_LAG_MS;
+            return this;
+        }
+
         public MongoSyncConfig build() {
             if (c.sourceMongoClient == null && (c.sourceUri == null || c.sourceUri.trim().isEmpty())) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
@@ -615,13 +528,6 @@ public class MongoSyncConfig {
             if (blank(c.targetDatabase) || blank(c.targetCollection)) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "target database/collection is required");
-            }
-            // OPLOG 的 mongoVersion 可运行时 buildInfo 探测；分片 URI 可在 AUTO/OPLOG 下使用或自动 listShards
-            if (c.hasShardedOplogSources()
-                    && c.captureMode != CaptureMode.OPLOG
-                    && c.captureMode != CaptureMode.AUTO) {
-                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                        "sourceOplogUris/Clients only supported when captureMode=OPLOG or AUTO");
             }
             return c;
         }

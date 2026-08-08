@@ -243,9 +243,6 @@ public final class SyncMain {
         if (p.getNamespaceCount() > 1) {
             appendKv(sb, "namespaces", String.valueOf(p.getNamespaceCount()));
         }
-        if (p.getShardSourceCount() > 0) {
-            appendKv(sb, "shardSources", String.valueOf(p.getShardSourceCount()));
-        }
         if (p.getDetail() != null && !p.getDetail().isEmpty()) {
             appendKv(sb, "detail", p.getDetail());
         }
@@ -314,6 +311,7 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override
                     public void onWriteError(int bucketId, com.whaleal.third.mongo.transfer.model.TransferEvent event,
@@ -331,14 +329,7 @@ public final class SyncMain {
         if (hasText(mongoVersion)) {
             b.mongoVersion(mongoVersion.trim());
         }
-        String oplogUris = props.getProperty("source.oplog.uris");
-        if (hasText(oplogUris)) {
-            b.sourceOplogUrisSemicolon(oplogUris.trim());
-        }
-        String shardNames = props.getProperty("source.oplog.shard.names");
-        if (hasText(shardNames)) {
-            b.sourceOplogShardNames(shardNames.trim().split("\\s*;\\s*"));
-        }
+        rejectRemovedShardOplogKeys(props);
         return b;
     }
 
@@ -369,6 +360,7 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override
                     public void onWriteError(int bucketId, com.whaleal.third.mongo.transfer.model.TransferEvent event,
@@ -386,15 +378,23 @@ public final class SyncMain {
         if (hasText(mongoVersion)) {
             b.mongoVersion(mongoVersion.trim());
         }
-        String oplogUris = props.getProperty("source.oplog.uris");
-        if (hasText(oplogUris)) {
-            b.sourceOplogUrisSemicolon(oplogUris.trim());
-        }
-        String shardNames = props.getProperty("source.oplog.shard.names");
-        if (hasText(shardNames)) {
-            b.sourceOplogShardNames(shardNames.trim().split("\\s*;\\s*"));
-        }
+        rejectRemovedShardOplogKeys(props);
         return b;
+    }
+
+    /**
+     * 多分片 OPLOG 已下线：分片集群增量统一走 ChangeStream@mongos。
+     * 老配置若仍带这些键，直接失败而不是被静默忽略。
+     */
+    private static void rejectRemovedShardOplogKeys(Properties props) {
+        for (String key : new String[]{"source.oplog.uris", "source.oplog.shard.names"}) {
+            if (hasText(props.getProperty(key))) {
+                throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                        key + " has been removed: multi-shard OPLOG is no longer supported. "
+                                + "Use captureMode=CHANGE_STREAM against mongos (MongoDB 3.6+), "
+                                + "or run one task per shard replica set");
+            }
+        }
     }
 
     private static Properties loadArgs(String[] args) throws Exception {
@@ -558,6 +558,19 @@ public final class SyncMain {
         } catch (NumberFormatException e) {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
                     "invalid integer for " + key + ": " + v, e);
+        }
+    }
+
+    private static long longProp(Properties p, String key, long def) {
+        String v = p.getProperty(key);
+        if (v == null || v.trim().isEmpty()) {
+            return def;
+        }
+        try {
+            return Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid long for " + key + ": " + v, e);
         }
     }
 

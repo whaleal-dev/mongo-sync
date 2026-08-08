@@ -20,7 +20,6 @@ public final class MigrationProgress {
     private final long incrementalEvents;
     private final long ddlEvents;
     private final long inflightEvents;
-    private final int shardSourceCount;
     private final Long lastEventTsMs;
     private final long startedAtMs;
     private final Long committedAtMs;
@@ -43,7 +42,6 @@ public final class MigrationProgress {
                              long incrementalEvents,
                              long ddlEvents,
                              long inflightEvents,
-                             int shardSourceCount,
                              Long lastEventTsMs,
                              long startedAtMs,
                              Long committedAtMs,
@@ -65,7 +63,6 @@ public final class MigrationProgress {
         this.incrementalEvents = incrementalEvents;
         this.ddlEvents = ddlEvents;
         this.inflightEvents = inflightEvents;
-        this.shardSourceCount = shardSourceCount;
         this.lastEventTsMs = lastEventTsMs;
         this.startedAtMs = startedAtMs;
         this.committedAtMs = committedAtMs;
@@ -126,10 +123,6 @@ public final class MigrationProgress {
 
     public long getInflightEvents() {
         return inflightEvents;
-    }
-
-    public int getShardSourceCount() {
-        return shardSourceCount;
     }
 
     public Long getLastEventTsMs() {
@@ -202,7 +195,6 @@ public final class MigrationProgress {
         doc.put("incrementalEvents", incrementalEvents);
         doc.put("ddlEvents", ddlEvents);
         doc.put("inflightEvents", inflightEvents);
-        doc.put("shardSourceCount", shardSourceCount);
         doc.put("lastEventTsMs", lastEventTsMs);
         doc.put("startedAtMs", startedAtMs);
         doc.put("committedAtMs", committedAtMs);
@@ -233,7 +225,6 @@ public final class MigrationProgress {
                 + ", incrementalEvents=" + incrementalEvents
                 + ", ddlEvents=" + ddlEvents
                 + ", inflightEvents=" + inflightEvents
-                + ", shardSourceCount=" + shardSourceCount
                 + ", lastEventTsMs=" + lastEventTsMs
                 + ", startedAtMs=" + startedAtMs
                 + ", committedAtMs=" + committedAtMs
