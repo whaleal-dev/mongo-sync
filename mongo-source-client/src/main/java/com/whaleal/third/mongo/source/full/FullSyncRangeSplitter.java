@@ -2,7 +2,6 @@ package com.whaleal.third.mongo.source.full;
 
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Projections;
 import com.mongodb.client.model.Sorts;
 import org.bson.BsonDocument;
@@ -19,7 +18,8 @@ import java.util.Map;
  * 大表全量拆分（对齐 d2t {@code SpliceNsData}）：
  * <ul>
  *   <li>按 {@code _id} 的 BSON 类型分别取 min/max</li>
- *   <li>按 collStats.avgObjSize 与任务体积（MB）估算每段文档数，再 {@code skip} 切段</li>
+ *   <li>同类型内按 collStats.avgObjSize 与任务体积（MB）估算每段文档数，再 {@code skip} 切段</li>
+ *   <li>切分与扫描过滤均带 {@code $type}，避免混合类型时越界重叠 / 丢尾</li>
  *   <li>末段 {@code isMax=true} 使用闭区间 {@code [min,max]}，其余 {@code [min,max)}</li>
  * </ul>
  */
@@ -42,38 +42,49 @@ public final class FullSyncRangeSplitter {
         /** 上界：{@link #isMax} 为 true 时含，否则不含 */
         public final Object max;
         public final boolean isMax;
+        /**
+         * BSON type 码；{@code null} 表示不按类型约束（整表回退）。
+         */
+        public final Integer bsonType;
 
         public IdRange(Object minInclusive, Object max, boolean isMax) {
+            this(minInclusive, max, isMax, null);
+        }
+
+        public IdRange(Object minInclusive, Object max, boolean isMax, Integer bsonType) {
             this.minInclusive = minInclusive;
             this.max = max;
             this.isMax = isMax;
+            this.bsonType = bsonType;
         }
 
         /** 全表（不按 _id 过滤）。 */
         public static IdRange all() {
-            return new IdRange(null, null, true);
+            return new IdRange(null, null, true, null);
         }
 
         public Bson toFilter() {
-            if (minInclusive == null && max == null) {
-                return new BsonDocument();
+            Document idClause = new Document();
+            if (bsonType != null) {
+                idClause.put("$type", bsonType);
             }
-            if (minInclusive == null) {
-                return isMax ? Filters.lte("_id", max) : Filters.lt("_id", max);
+            if (minInclusive != null) {
+                idClause.put("$gte", minInclusive);
             }
-            if (max == null) {
-                return Filters.gte("_id", minInclusive);
+            if (max != null) {
+                idClause.put(isMax ? "$lte" : "$lt", max);
             }
-            if (isMax) {
-                return Filters.and(Filters.gte("_id", minInclusive), Filters.lte("_id", max));
+            if (idClause.isEmpty()) {
+                return new Document();
             }
-            return Filters.and(Filters.gte("_id", minInclusive), Filters.lt("_id", max));
+            return new Document("_id", idClause);
         }
 
         @Override
         public String toString() {
             String right = isMax ? "]" : ")";
-            return "[" + minInclusive + ", " + max + right;
+            String type = bsonType == null ? "" : (" type=" + bsonType);
+            return "[" + minInclusive + ", " + max + right + type;
         }
     }
 
@@ -104,11 +115,12 @@ public final class FullSyncRangeSplitter {
 
         List<IdRange> ranges = new ArrayList<IdRange>();
         for (Map.Entry<Integer, IdRange> e : typeBounds.entrySet()) {
+            int type = e.getKey();
             IdRange remaining = e.getValue();
             Object cursorMin = remaining.minInclusive;
             Object typeMax = remaining.max;
             while (cursorMin != null) {
-                IdRange piece = splitOne(collection, cursorMin, typeMax, rangeSize);
+                IdRange piece = splitOne(collection, type, cursorMin, typeMax, rangeSize);
                 ranges.add(piece);
                 if (piece.isMax) {
                     break;
@@ -121,13 +133,15 @@ public final class FullSyncRangeSplitter {
     }
 
     private static IdRange splitOne(MongoCollection<BsonDocument> collection,
+                                    int bsonType,
                                     Object minInclusive,
                                     Object typeMax,
                                     int rangeSize) {
+        Document typedGte = new Document("_id", new Document("$type", bsonType).append("$gte", minInclusive));
         BsonDocument boundary = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                boundary = collection.find(Filters.gte("_id", minInclusive))
+                boundary = collection.find(typedGte)
                         .projection(Projections.include("_id"))
                         .sort(Sorts.ascending("_id"))
                         .skip(Math.max(1, rangeSize))
@@ -136,14 +150,15 @@ public final class FullSyncRangeSplitter {
                 break;
             } catch (Exception e) {
                 if (attempt == 3) {
-                    System.err.println("[mongo-source] full-sync split skip failed: " + e.getMessage());
+                    System.err.println("[mongo-source] full-sync split skip failed type=" + bsonType
+                            + ": " + e.getMessage());
                 }
             }
         }
         if (boundary != null && boundary.containsKey("_id")) {
-            return new IdRange(minInclusive, boundary.get("_id"), false);
+            return new IdRange(minInclusive, boundary.get("_id"), false, bsonType);
         }
-        return new IdRange(minInclusive, typeMax, true);
+        return new IdRange(minInclusive, typeMax, true, bsonType);
     }
 
     private static Map<Integer, IdRange> discoverIdTypeBounds(MongoCollection<BsonDocument> collection) {
@@ -190,7 +205,7 @@ public final class FullSyncRangeSplitter {
                         || !minDoc.containsKey("_id") || !maxDoc.containsKey("_id")) {
                     return null;
                 }
-                return new IdRange(minDoc.get("_id"), maxDoc.get("_id"), true);
+                return new IdRange(minDoc.get("_id"), maxDoc.get("_id"), true, type);
             } catch (Exception e) {
                 if (attempt == 3) {
                     System.err.println("[mongo-source] full-sync min/max type=" + type

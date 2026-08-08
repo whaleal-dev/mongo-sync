@@ -70,7 +70,7 @@ public class OplogListener extends AbstractSourceListener {
     protected void startIncremental() {
         int retryCount = 0;
         OplogOffset offset;
-        if (initialSyncStartTs != null) {
+        if (initialSyncStartTs != null && !isInitialSyncFinished()) {
             offset = OplogOffset.of(initialSyncStartTs);
             saveOplogOffset(offset);
         } else {

@@ -60,6 +60,13 @@ public final class MongoVersion {
         return major < 7;
     }
 
+    /**
+     * ChangeStream 自 MongoDB 3.6 起支持（副本集与分片集群）。
+     */
+    public boolean supportsChangeStream() {
+        return isAtLeast(3, 6);
+    }
+
     public OplogFormatVersion toOplogFormat() {
         if (!supportsOplog()) {
             throw new IllegalStateException(

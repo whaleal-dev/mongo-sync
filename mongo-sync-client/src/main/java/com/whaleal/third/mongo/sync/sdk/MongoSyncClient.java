@@ -9,7 +9,6 @@ import com.whaleal.third.mongo.source.config.SyncMode;
 import com.whaleal.third.mongo.source.oplog.MongoVersion;
 import com.whaleal.third.mongo.source.sdk.MongoSourceClient;
 import com.whaleal.third.mongo.source.spi.OplogOffsetStorage;
-import com.whaleal.third.mongo.source.topology.ShardEndpoint;
 import com.whaleal.third.mongo.source.topology.SourceTopology;
 import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
@@ -45,9 +44,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * </pre>
  * <p>
  * 源端架构自动匹配（{@code captureMode=AUTO}，默认）：
- * standalone / replicaSet / sharding → 选择 ChangeStream 或分片多源 OPLOG。
- * 分片 OPLOG：未配 {@code sourceOplogUris} 时自动 {@code listShards}；
- * 全量走 {@code sourceUri}（mongos），增量并行消费各 shard oplog。
+ * 副本集优先 ChangeStream，低于 3.6 回落 OPLOG；分片集群只走 ChangeStream@mongos；
+ * standalone 仅支持全量。
  */
 public final class MongoSyncClient implements AutoCloseable {
 
@@ -62,11 +60,7 @@ public final class MongoSyncClient implements AutoCloseable {
     /** 解析后的捕获模式（AUTO 已展开）。 */
     private final CaptureMode resolvedCaptureMode;
     private final SourceTopology sourceTopology;
-    /** 单源模式：唯一 Source；分片 OPLOG 模式：仅全量 Source（可为 null）。 */
     private final MongoSourceClient source;
-    /** 分片 OPLOG 增量源（可空）。 */
-    private final List<MongoSourceClient> shardOplogSources;
-    private final List<MongoClient> ownedShardClients;
     private final AtomicReference<MigrationState> migrationState =
             new AtomicReference<MigrationState>(MigrationState.IDLE);
     private final AtomicLong snapshotEvents = new AtomicLong(0);
@@ -76,6 +70,8 @@ public final class MongoSyncClient implements AutoCloseable {
     private final AtomicLong estimatedTotalDocuments = new AtomicLong(0);
     private final AtomicReference<Long> committedAtMs = new AtomicReference<Long>(null);
     private final AtomicReference<Long> lastEventTsMs = new AtomicReference<Long>(null);
+    /** 最近一次收到增量事件的本机时间（用于 idle 源判定追平）。 */
+    private final AtomicLong lastIncrementalReceivedAtMs = new AtomicLong(0L);
     private final AtomicBoolean fullSyncComplete = new AtomicBoolean(false);
     private final AtomicReference<String> stateDetail = new AtomicReference<String>("idle");
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -151,6 +147,7 @@ public final class MongoSyncClient implements AutoCloseable {
                     snapshotEvents.incrementAndGet();
                 } else {
                     incrementalEvents.incrementAndGet();
+                    lastIncrementalReceivedAtMs.set(System.currentTimeMillis());
                 }
                 if (event.getTsMs() != null) {
                     lastEventTsMs.set(event.getTsMs());
@@ -180,13 +177,10 @@ public final class MongoSyncClient implements AutoCloseable {
         };
 
         // 按源端架构自动匹配读任务：standalone / replicaSet / sharding
-        boolean hasExplicitShards = config.hasShardedOplogSources();
         SourceTopologyInfo topologyInfo = SourceTopologyDetector.detect(
                 sourceClient,
                 config.getCaptureMode(),
                 config.getSourceUri(),
-                true,
-                !hasExplicitShards,
                 config.getSyncMode());
         this.sourceTopology = topologyInfo.getTopology();
         this.resolvedCaptureMode = topologyInfo.getResolvedCaptureMode();
@@ -194,67 +188,20 @@ public final class MongoSyncClient implements AutoCloseable {
                 ? config.getMongoVersion()
                 : topologyInfo.getVersion();
 
-        // OPLOG 不可打 mongos：仅在需要增量且拓扑为分片时，改写为各 shard OPLOG
-        boolean needInc = config.getSyncMode().includesIncremental();
-        boolean shardedOplog = needInc && topologyInfo.isMultiShardOplog();
-
-        List<MongoClient> ownedShards = new ArrayList<MongoClient>();
-        List<MongoSourceClient> shardSources = new ArrayList<MongoSourceClient>();
-
-        if (shardedOplog) {
-            // 全量（若需要）走 mongos 集合扫描；增量走各 shard OPLOG（绝不在 mongos 上拉 oplog）
-            if (config.getSyncMode().includesFull()) {
-                this.source = buildSource(
-                        sourceClient,
-                        SyncMode.FULL,
-                        CaptureMode.CHANGE_STREAM,
-                        null,
-                        eventListener,
-                        ddlListener,
-                        afterFull,
-                        null,
-                        null);
-            } else {
-                this.source = null;
-            }
-            List<ShardOplogEndpoint> endpoints = hasExplicitShards
-                    ? resolveShardEndpoints(config, ownedShards)
-                    : resolveDiscoveredShards(config, topologyInfo.getShards(), ownedShards);
-            System.err.println("[mongo-sync] read-plan SHARDING: full@mongos incr@shardOplog x"
-                    + endpoints.size() + " ns=" + config.sourceNs());
-            for (ShardOplogEndpoint ep : endpoints) {
-                shardSources.add(buildSource(
-                        ep.client,
-                        SyncMode.INCREMENTAL,
-                        CaptureMode.OPLOG,
-                        resolvedVersion,
-                        eventListener,
-                        ddlListener,
-                        null,
-                        ep.offsetStorage,
-                        ep.name));
-            }
-            this.shardOplogSources = Collections.unmodifiableList(shardSources);
-            this.ownedShardClients = Collections.unmodifiableList(ownedShards);
-        } else {
-            // 单源：RS / standalone(FULL) / sharding+ChangeStream@mongos / 仅全量@mongos
-            System.err.println("[mongo-sync] read-plan " + sourceTopology
-                    + ": single-source capture=" + resolvedCaptureMode
-                    + " syncMode=" + config.getSyncMode()
-                    + " ns=" + config.sourceNs());
-            this.source = buildSource(
-                    sourceClient,
-                    config.getSyncMode(),
-                    resolvedCaptureMode,
-                    resolvedVersion,
-                    eventListener,
-                    ddlListener,
-                    afterFull,
-                    resolveSingleOplogStorage(config, resolvedCaptureMode),
-                    null);
-            this.shardOplogSources = Collections.emptyList();
-            this.ownedShardClients = Collections.emptyList();
-        }
+        // 单源：RS(ChangeStream 或 OPLOG) / standalone(FULL) / sharding+ChangeStream@mongos
+        System.err.println("[mongo-sync] read-plan " + sourceTopology
+                + ": single-source capture=" + resolvedCaptureMode
+                + " syncMode=" + config.getSyncMode()
+                + " ns=" + config.sourceNs());
+        this.source = buildSource(
+                sourceClient,
+                config.getSyncMode(),
+                resolvedCaptureMode,
+                resolvedVersion,
+                eventListener,
+                ddlListener,
+                afterFull,
+                resolveSingleOplogStorage(config, resolvedCaptureMode));
     }
 
     private MongoSourceClient buildSource(MongoClient client,
@@ -264,8 +211,7 @@ public final class MongoSyncClient implements AutoCloseable {
                                           TransferEventListener eventListener,
                                           DdlEventListener ddlListener,
                                           Runnable afterFull,
-                                          OplogOffsetStorage oplogOffsetStorage,
-                                          String shardLogName) {
+                                          OplogOffsetStorage oplogOffsetStorage) {
         MongoSourceClient.Builder sourceBuilder = MongoSourceClient.builder()
                 .mongoClient(client)
                 .closeMongoClientOnStop(false)
@@ -310,10 +256,6 @@ public final class MongoSyncClient implements AutoCloseable {
             }
         }
 
-        if (shardLogName != null) {
-            System.err.println("[mongo-sync] bind OPLOG source shard=" + shardLogName
-                    + " ns=" + config.sourceNs());
-        }
         return sourceBuilder.build();
     }
 
@@ -329,92 +271,6 @@ public final class MongoSyncClient implements AutoCloseable {
                     .oplogOffsetStorage(config.getSourceDatabase(), config.getSourceCollection());
         }
         return new MemoryOplogOffsetStorage();
-    }
-
-    private static List<ShardOplogEndpoint> resolveDiscoveredShards(MongoSyncConfig config,
-                                                                    List<ShardEndpoint> discovered,
-                                                                    List<MongoClient> ownedShards) {
-        List<ShardOplogEndpoint> out = new ArrayList<ShardOplogEndpoint>();
-        FileOffsetStoreFactory fileFactory = null;
-        if (config.getOffsetStoreDir() != null && !config.getOffsetStoreDir().trim().isEmpty()) {
-            fileFactory = new FileOffsetStoreFactory(config.getOffsetStoreDir().trim());
-        }
-        for (ShardEndpoint ep : discovered) {
-            MongoClient c = MongoClients.create(ep.getUri());
-            ownedShards.add(c);
-            out.add(new ShardOplogEndpoint(c, ep.getShardId(), offsetFor(config, fileFactory, ep.getShardId())));
-        }
-        if (out.isEmpty()) {
-            throw new IllegalStateException("sharded OPLOG enabled but no shard endpoints discovered");
-        }
-        return out;
-    }
-
-    private static List<ShardOplogEndpoint> resolveShardEndpoints(MongoSyncConfig config,
-                                                                  List<MongoClient> ownedShards) {
-        List<ShardOplogEndpoint> out = new ArrayList<ShardOplogEndpoint>();
-        FileOffsetStoreFactory fileFactory = null;
-        if (config.getOffsetStoreDir() != null && !config.getOffsetStoreDir().trim().isEmpty()) {
-            fileFactory = new FileOffsetStoreFactory(config.getOffsetStoreDir().trim());
-        }
-
-        List<MongoClient> clients = config.getSourceOplogClients();
-        List<String> uris = config.getSourceOplogUris();
-        List<String> names = config.getSourceOplogShardNames();
-        int index = 0;
-
-        if (clients != null) {
-            for (MongoClient c : clients) {
-                if (c == null) {
-                    continue;
-                }
-                String name = shardName(names, index);
-                out.add(new ShardOplogEndpoint(c, name, offsetFor(config, fileFactory, name)));
-                index++;
-            }
-        }
-        if (uris != null) {
-            for (String uri : uris) {
-                MongoClient c = MongoClients.create(uri);
-                ownedShards.add(c);
-                String name = shardName(names, index);
-                out.add(new ShardOplogEndpoint(c, name, offsetFor(config, fileFactory, name)));
-                index++;
-            }
-        }
-        if (out.isEmpty()) {
-            throw new IllegalStateException("sharded OPLOG enabled but no shard endpoints resolved");
-        }
-        return out;
-    }
-
-    private static String shardName(List<String> names, int index) {
-        if (names != null && index < names.size() && names.get(index) != null) {
-            return names.get(index);
-        }
-        return "shard" + index;
-    }
-
-    private static OplogOffsetStorage offsetFor(MongoSyncConfig config,
-                                                FileOffsetStoreFactory fileFactory,
-                                                String shardName) {
-        if (fileFactory != null) {
-            return fileFactory.oplogOffsetStorage(
-                    config.getSourceDatabase(), config.getSourceCollection(), shardName);
-        }
-        return new MemoryOplogOffsetStorage();
-    }
-
-    private static final class ShardOplogEndpoint {
-        final MongoClient client;
-        final String name;
-        final OplogOffsetStorage offsetStorage;
-
-        ShardOplogEndpoint(MongoClient client, String name, OplogOffsetStorage offsetStorage) {
-            this.client = client;
-            this.name = name;
-            this.offsetStorage = offsetStorage;
-        }
     }
 
     public static MongoSyncConfig.Builder builder() {
@@ -442,9 +298,6 @@ public final class MongoSyncClient implements AutoCloseable {
             }
             migrationState.set(MigrationState.RUNNING);
             stateDetail.set("resuming");
-            for (MongoSourceClient shard : shardOplogSources) {
-                shard.start();
-            }
             if (source != null) {
                 source.start();
             }
@@ -467,10 +320,6 @@ public final class MongoSyncClient implements AutoCloseable {
                         config.isBootstrapCollection(),
                         config.isBootstrapIndexes(),
                         config.isSkipTtlIndexes());
-            }
-            // 分片：先起各 shard 增量，再跑全量（∥）
-            for (MongoSourceClient shard : shardOplogSources) {
-                shard.start();
             }
             if (source != null) {
                 source.start();
@@ -513,9 +362,6 @@ public final class MongoSyncClient implements AutoCloseable {
         if (source != null) {
             source.pause();
         }
-        for (MongoSourceClient shard : shardOplogSources) {
-            shard.pause();
-        }
         pipeline.tryDrainAndFlush(Math.max(config.getDdlWaitSeconds(), 30));
         stateDetail.set("paused");
         return progress();
@@ -553,7 +399,6 @@ public final class MongoSyncClient implements AutoCloseable {
                 incrementalEvents.get(),
                 ddlEvents.get(),
                 pipeline.inflight(),
-                shardOplogSources.size(),
                 lastEventTsMs.get(),
                 startedAtMs.get(),
                 committedAtMs.get(),
@@ -585,9 +430,6 @@ public final class MongoSyncClient implements AutoCloseable {
             if (source != null) {
                 source.stop();
             }
-            for (MongoSourceClient shard : shardOplogSources) {
-                shard.stop();
-            }
             pipeline.drainAndFlush(Math.max(config.getDdlWaitSeconds(), 30));
             committedAtMs.set(System.currentTimeMillis());
             migrationState.set(MigrationState.COMMITTED);
@@ -598,10 +440,6 @@ public final class MongoSyncClient implements AutoCloseable {
             stateDetail.set("commit failed: " + e.getMessage());
             throw e;
         }
-    }
-
-    public int shardOplogSourceCount() {
-        return shardOplogSources.size();
     }
 
     /** 源端架构（standalone / replicaSet / sharding）。 */
@@ -640,12 +478,13 @@ public final class MongoSyncClient implements AutoCloseable {
         }
         boolean ready = started.get()
                 && fullSyncComplete.get()
-                && pipeline.inflight() == 0;
-        migrationState.set(ready ? MigrationState.CAN_COMMIT : MigrationState.RUNNING);
-        if (ready) {
-            stateDetail.set("ready to commit");
-        } else {
-            stateDetail.set(commitReadinessOf(MigrationState.RUNNING));
+                && pipeline.inflight() == 0
+                && lagAcceptable(System.currentTimeMillis());
+        MigrationState next = ready ? MigrationState.CAN_COMMIT : MigrationState.RUNNING;
+        // 仅状态跃迁时更新 detail，避免热路径每条事件做字符串拼接
+        if (current != next) {
+            migrationState.set(next);
+            stateDetail.set(ready ? "ready to commit" : commitReadinessOf(MigrationState.RUNNING));
         }
     }
 
@@ -693,6 +532,25 @@ public final class MongoSyncClient implements AutoCloseable {
         return lag < 0L ? 0L : lag;
     }
 
+    /**
+     * 增量滞后是否可接受：clusterTime 滞后 ≤ {@link MongoSyncConfig#getCommitMaxLagMs()}，
+     * 或增量流已空闲（无新事件 ≥ maxLag 且 pipeline 排空，适用于源端无写入）。
+     */
+    private boolean lagAcceptable(long now) {
+        if (!config.getSyncMode().includesIncremental()) {
+            return true;
+        }
+        long maxLag = config.getCommitMaxLagMs();
+        if (lastIncrementalReceivedAtMs.get() <= 0L) {
+            return false;
+        }
+        if (pipeline.inflight() == 0L && (now - lastIncrementalReceivedAtMs.get()) >= maxLag) {
+            return true;
+        }
+        Long lag = computeLagMs(now);
+        return lag != null && lag.longValue() <= maxLag;
+    }
+
     private String commitReadinessOf(MigrationState state) {
         if (state == MigrationState.COMMITTED) {
             return "already committed";
@@ -716,7 +574,21 @@ public final class MongoSyncClient implements AutoCloseable {
         if (inflight > 0L) {
             return "waiting inflight drain=" + inflight;
         }
-        return "waiting incremental catch-up";
+        if (config.getSyncMode().includesIncremental()) {
+            long maxLag = config.getCommitMaxLagMs();
+            long lastReceived = lastIncrementalReceivedAtMs.get();
+            if (lastReceived <= 0L) {
+                return "waiting first incremental event";
+            }
+            long now = System.currentTimeMillis();
+            if ((now - lastReceived) < maxLag) {
+                Long lag = computeLagMs(now);
+                if (lag == null || lag.longValue() > maxLag) {
+                    return "waiting lagMs=" + (lag == null ? "unknown" : lag) + " maxLagMs=" + maxLag;
+                }
+            }
+        }
+        return "waiting prerequisites";
     }
 
     @Override
@@ -734,12 +606,6 @@ public final class MongoSyncClient implements AutoCloseable {
             } catch (Exception ignored) {
             }
         }
-        for (MongoSourceClient shard : shardOplogSources) {
-            try {
-                shard.stop();
-            } catch (Exception ignored) {
-            }
-        }
         try {
             pipeline.close();
         } catch (Exception ignored) {
@@ -747,12 +613,6 @@ public final class MongoSyncClient implements AutoCloseable {
         try {
             sink.close();
         } catch (Exception ignored) {
-        }
-        for (MongoClient c : ownedShardClients) {
-            try {
-                c.close();
-            } catch (Exception ignored) {
-            }
         }
         if (ownsSourceClient && sourceClient != null) {
             try {

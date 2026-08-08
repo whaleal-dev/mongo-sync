@@ -31,8 +31,15 @@ public class MongoSinkClient implements AutoCloseable {
         return new Builder();
     }
 
-    public void write(TransferEvent event) {
-        writer.apply(event);
+    public long write(TransferEvent event) {
+        return writer.apply(event);
+    }
+
+    /**
+     * 已确认落库的最大写入序号，见 {@link SinkWriter#landedThrough()}。
+     */
+    public long landedThrough() {
+        return writer.landedThrough();
     }
 
     public void write(String op, Map<String, Object> after, Map<String, Object> before) {

@@ -12,7 +12,9 @@ public enum MongoSyncErrorCode {
     CLIENT_STATE_INVALID("MSYNC_STATE_001"),
     PAUSE_NOT_ALLOWED("MSYNC_CTL_001"),
     RESUME_NOT_ALLOWED("MSYNC_CTL_002"),
-    COMMIT_NOT_ALLOWED("MSYNC_CTL_003");
+    COMMIT_NOT_ALLOWED("MSYNC_CTL_003"),
+    /** 多表 pause/commit 部分子任务失败（已尽力处理全部子任务）。 */
+    MULTI_OPERATION_PARTIAL_FAILURE("MSYNC_CTL_004");
 
     private final String code;
 
