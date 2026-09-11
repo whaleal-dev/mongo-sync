@@ -1,6 +1,7 @@
 # 配置示例
 
 - 同步：[mongo-sync.example.properties](./mongo-sync.example.properties) → `SyncMain` / `MongoSyncClient`
+- Kafka 目标：[mongo-sync-kafka.example.properties](./mongo-sync-kafka.example.properties)
 - 比对：[mongo-verify.example.properties](./mongo-verify.example.properties) → `VerifyMain`
 
 ## 脚本入口（推荐）

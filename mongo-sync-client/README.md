@@ -11,7 +11,7 @@ Source (Oplog / ChangeStream)
 Sink 落地
 ```
 
-Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。
+Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。目标可以是 MongoDB，也可以是 Kafka（`targetType=KAFKA`）。
 
 ## 对齐 d2t 的设计点
 
@@ -185,6 +185,19 @@ MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
 sync.start();
 // ...
 sync.close();
+```
+
+Kafka 目标：
+
+```java
+MongoSyncClient.create(MongoSyncClient.builder()
+        .sourceUri("mongodb://127.0.0.1:27017/?replicaSet=rs0")
+        .targetUri("127.0.0.1:9092")
+        .targetType(TargetType.KAFKA)
+        .mapCollection("demo", "orders")
+        .kafkaTopicPrefix("mongo")
+        .syncMode(SyncMode.FULL_AND_INCREMENTAL)
+        .writeErrorHandler((bucket, event, err) -> { }));
 ```
 
 Oplog 模式：

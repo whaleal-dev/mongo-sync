@@ -6,10 +6,11 @@
 
 ```text
 mongo-sync/
-├── mongo-transfer-model/   通用 TransferEvent / DdlEvent（捕获无关）
+├── mongo-transfer-model/   通用 TransferEvent / DdlEvent / TransferSink（捕获无关）
 ├── mongo-source-client/    ChangeStream / Oplog → 传输模型
-├── mongo-sink-client/      只识别传输模型 → 目标库写入 / DDL
-├── mongo-sync-client/      Source → Disruptor 分桶 + Caffeine 锁 → Sink
+├── mongo-sink-client/      只识别传输模型 → MongoDB 写入 / DDL
+├── mongo-kafka-sink-client 只识别传输模型 → Kafka（mongo-kafka Change Stream 格式）
+├── mongo-sync-client/      Source → Disruptor 分桶 + Caffeine 锁 → TransferSink
 └── doc/oplog/              各版本 oplog 样例（自 d2t 拷贝）
 ```
 
@@ -31,7 +32,7 @@ MongoSourceClient
   → IdBucketRouter（_id % bucketNum；唯一索引强制单桶）
   → 每桶 LMAX Disruptor RingBuffer（BlockingWaitStrategy 背压）
   → 同桶同 _id 再次出现先 flush
-  → MongoSinkClient（UPSERT；有 unique 则 ordered bulk）
+  → MongoSinkClient / KafkaSinkClient
 ```
 
 ### SyncMode（全量 / 增量）
@@ -71,6 +72,7 @@ MongoSourceClient
 | 捕获窗口告警（`window.warn.seconds`） | ✅ |
 | 独立增量 pause（`pauseIncremental`） | ✅ |
 | 数据比对校验（`VerifyMain`：COUNT/ID/FULL） | ✅ |
+| Kafka 目标（mongo-kafka Change Stream JSON/BSON） | ✅ |
 | 位点文件持久化（`offsetStoreDir`，按 ns） | ✅ |
 | 位点周期心跳日志 | ✅ |
 | 大表全量并行读（`fullSyncParallelism`，对齐 d2t `_id` 切段） | ✅ |
@@ -101,6 +103,7 @@ MongoSourceClient
 |------|-------------|
 | JDK | 1.8+ |
 | mongodb-driver-sync | 4.11.1 |
+| kafka-clients | **3.6.2**（Java 8；仅 Kafka 目标） |
 | caffeine | **2.9.3**（勿用 3.x） |
 | disruptor | **3.4.4**（勿用 4.x） |
 
@@ -115,7 +118,8 @@ mvn clean install -DskipTests
 | [README.md](../README.md) | 工程总览 |
 | [mongo-transfer-model/README.md](../mongo-transfer-model/README.md) | 传输模型 |
 | [mongo-source-client/README.md](../mongo-source-client/README.md) | Source API |
-| [mongo-sink-client/README.md](../mongo-sink-client/README.md) | Sink API |
+| [mongo-sink-client/README.md](../mongo-sink-client/README.md) | Sink API（MongoDB） |
+| [mongo-kafka-sink-client/README.md](../mongo-kafka-sink-client/README.md) | Kafka 目标 / Change Stream 消息 |
 | [mongo-sync-client/README.md](../mongo-sync-client/README.md) | 同步编排 / SyncMode |
 | [doc/examples/](../doc/examples/) | 配置文件示例（properties） |
 | [doc/oplog/](../doc/oplog/) | Oplog 样例 |

@@ -7,6 +7,7 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.config.TargetType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.ns.CollectionDiscovery;
@@ -66,7 +67,10 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             source = MongoClients.create(config.getSourceUri());
             ownsSource = true;
         }
-        if (config.getTargetMongoClient() != null) {
+        if (config.getTargetType() == TargetType.KAFKA) {
+            target = null;
+            ownsTarget = false;
+        } else if (config.getTargetMongoClient() != null) {
             target = config.getTargetMongoClient();
         } else {
             target = MongoClients.create(config.getTargetUri());
@@ -87,7 +91,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             if (ownsSource) {
                 source.close();
             }
-            if (ownsTarget) {
+            if (ownsTarget && target != null) {
                 target.close();
             }
             throw new IllegalStateException(
@@ -108,13 +112,12 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             for (NamespaceMapper.NsPair pair : pairs) {
                 MongoSyncConfig.Builder b = MongoSyncClient.builder()
                         .sourceMongoClient(source)
-                        .targetMongoClient(target)
                         .closeSourceClientOnStop(false)
-                        .closeTargetClientOnClose(false)
                         .sourceDatabase(pair.sourceDatabase)
                         .sourceCollection(pair.sourceCollection)
                         .targetDatabase(pair.targetDatabase)
                         .targetCollection(pair.targetCollection)
+                        .targetType(config.getTargetType())
                         .captureMode(resolvedCapture)
                         .syncMode(config.getSyncMode())
                         .fullDocument(config.getFullDocument())
@@ -137,7 +140,26 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .fullSyncBatchSize(config.getFullSyncBatchSize())
                         .fullSyncTaskMbSize(config.getFullSyncTaskMbSize())
                         .windowWarnSeconds(config.getWindowWarnSeconds())
-                        .commitMaxLagMs(config.getCommitMaxLagMs());
+                        .commitMaxLagMs(config.getCommitMaxLagMs())
+                        .kafkaTopic(config.getKafkaTopic())
+                        .kafkaTopicPrefix(config.getKafkaTopicPrefix())
+                        .kafkaTopicSeparator(config.getKafkaTopicSeparator())
+                        .kafkaTopicSuffix(config.getKafkaTopicSuffix())
+                        .kafkaOutputFormat(config.getKafkaOutputFormat())
+                        .kafkaPublishDdl(config.isKafkaPublishDdl())
+                        .kafkaAcks(config.getKafkaAcks())
+                        .kafkaLingerMs(config.getKafkaLingerMs())
+                        .kafkaBatchSizeBytes(config.getKafkaBatchSizeBytes())
+                        .kafkaCompressionType(config.getKafkaCompressionType())
+                        .kafkaClientId(config.getKafkaClientId())
+                        .kafkaProducerProperties(config.getKafkaProducerProperties());
+
+                if (config.getTargetType() == TargetType.KAFKA) {
+                    b.targetUri(config.getTargetUri());
+                } else {
+                    b.targetMongoClient(target)
+                            .closeTargetClientOnClose(false);
+                }
 
                 if (config.getMongoVersion() != null) {
                     b.mongoVersion(config.getMongoVersion());
@@ -159,7 +181,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             if (ownsSource) {
                 source.close();
             }
-            if (ownsTarget) {
+            if (ownsTarget && target != null) {
                 target.close();
             }
             throw e;

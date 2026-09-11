@@ -30,6 +30,10 @@
             <artifactId>mongo-sink-client</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.whaleal.third</groupId>
+            <artifactId>mongo-kafka-sink-client</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
         </dependency>

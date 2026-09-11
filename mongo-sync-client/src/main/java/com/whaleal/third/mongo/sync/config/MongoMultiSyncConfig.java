@@ -4,6 +4,8 @@ import com.mongodb.client.MongoClient;
 import com.whaleal.third.mongo.sink.config.MongoSinkConfig;
 import com.whaleal.third.mongo.sink.config.OnConflict;
 import com.whaleal.third.mongo.sink.config.WriteMode;
+import com.whaleal.third.mongo.sink.kafka.config.KafkaOutputFormat;
+import com.whaleal.third.mongo.sink.kafka.config.KafkaSinkConfig;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
@@ -13,6 +15,10 @@ import com.whaleal.third.mongo.source.oplog.MongoVersion;
 import com.whaleal.third.mongo.sync.ns.NamespaceFilter;
 import com.whaleal.third.mongo.sync.ns.NamespaceMapper;
 import com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler;
+
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 多库表同步配置：白/黑名单发现集合后，为每张表启动一个 {@link com.whaleal.third.mongo.sync.sdk.MongoSyncClient}。
@@ -60,6 +66,20 @@ public final class MongoMultiSyncConfig {
     private int windowWarnSeconds = MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS;
 
     private long commitMaxLagMs = MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS;
+
+    private TargetType targetType = TargetType.MONGODB;
+    private String kafkaTopic;
+    private String kafkaTopicPrefix = "";
+    private String kafkaTopicSeparator = KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR;
+    private String kafkaTopicSuffix = "";
+    private KafkaOutputFormat kafkaOutputFormat = KafkaOutputFormat.JSON;
+    private boolean kafkaPublishDdl = true;
+    private String kafkaAcks = KafkaSinkConfig.DEFAULT_ACKS;
+    private int kafkaLingerMs = KafkaSinkConfig.DEFAULT_LINGER_MS;
+    private int kafkaBatchSizeBytes = KafkaSinkConfig.DEFAULT_BATCH_SIZE_BYTES;
+    private String kafkaCompressionType = KafkaSinkConfig.DEFAULT_COMPRESSION;
+    private String kafkaClientId = KafkaSinkConfig.DEFAULT_CLIENT_ID;
+    private Map<String, String> kafkaProducerProperties = Collections.emptyMap();
 
     private MongoMultiSyncConfig() {
     }
@@ -190,6 +210,58 @@ public final class MongoMultiSyncConfig {
 
     public long getCommitMaxLagMs() {
         return commitMaxLagMs;
+    }
+
+    public TargetType getTargetType() {
+        return targetType == null ? TargetType.MONGODB : targetType;
+    }
+
+    public String getKafkaTopic() {
+        return kafkaTopic;
+    }
+
+    public String getKafkaTopicPrefix() {
+        return kafkaTopicPrefix;
+    }
+
+    public String getKafkaTopicSeparator() {
+        return kafkaTopicSeparator;
+    }
+
+    public String getKafkaTopicSuffix() {
+        return kafkaTopicSuffix;
+    }
+
+    public KafkaOutputFormat getKafkaOutputFormat() {
+        return kafkaOutputFormat == null ? KafkaOutputFormat.JSON : kafkaOutputFormat;
+    }
+
+    public boolean isKafkaPublishDdl() {
+        return kafkaPublishDdl;
+    }
+
+    public String getKafkaAcks() {
+        return kafkaAcks;
+    }
+
+    public int getKafkaLingerMs() {
+        return kafkaLingerMs;
+    }
+
+    public int getKafkaBatchSizeBytes() {
+        return kafkaBatchSizeBytes;
+    }
+
+    public String getKafkaCompressionType() {
+        return kafkaCompressionType;
+    }
+
+    public String getKafkaClientId() {
+        return kafkaClientId;
+    }
+
+    public Map<String, String> getKafkaProducerProperties() {
+        return kafkaProducerProperties;
     }
 
     public NamespaceFilter namespaceFilter() {
@@ -388,12 +460,93 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
+        public Builder targetType(TargetType targetType) {
+            c.targetType = targetType == null ? TargetType.MONGODB : targetType;
+            return this;
+        }
+
+        public Builder kafkaTopic(String kafkaTopic) {
+            c.kafkaTopic = kafkaTopic;
+            return this;
+        }
+
+        public Builder kafkaTopicPrefix(String kafkaTopicPrefix) {
+            c.kafkaTopicPrefix = kafkaTopicPrefix == null ? "" : kafkaTopicPrefix;
+            return this;
+        }
+
+        public Builder kafkaTopicSeparator(String kafkaTopicSeparator) {
+            c.kafkaTopicSeparator = (kafkaTopicSeparator == null || kafkaTopicSeparator.isEmpty())
+                    ? KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR : kafkaTopicSeparator;
+            return this;
+        }
+
+        public Builder kafkaTopicSuffix(String kafkaTopicSuffix) {
+            c.kafkaTopicSuffix = kafkaTopicSuffix == null ? "" : kafkaTopicSuffix;
+            return this;
+        }
+
+        public Builder kafkaOutputFormat(KafkaOutputFormat kafkaOutputFormat) {
+            c.kafkaOutputFormat = kafkaOutputFormat == null ? KafkaOutputFormat.JSON : kafkaOutputFormat;
+            return this;
+        }
+
+        public Builder kafkaPublishDdl(boolean kafkaPublishDdl) {
+            c.kafkaPublishDdl = kafkaPublishDdl;
+            return this;
+        }
+
+        public Builder kafkaAcks(String kafkaAcks) {
+            c.kafkaAcks = kafkaAcks;
+            return this;
+        }
+
+        public Builder kafkaLingerMs(int kafkaLingerMs) {
+            c.kafkaLingerMs = kafkaLingerMs;
+            return this;
+        }
+
+        public Builder kafkaBatchSizeBytes(int kafkaBatchSizeBytes) {
+            c.kafkaBatchSizeBytes = kafkaBatchSizeBytes;
+            return this;
+        }
+
+        public Builder kafkaCompressionType(String kafkaCompressionType) {
+            c.kafkaCompressionType = kafkaCompressionType;
+            return this;
+        }
+
+        public Builder kafkaClientId(String kafkaClientId) {
+            c.kafkaClientId = kafkaClientId;
+            return this;
+        }
+
+        public Builder kafkaProducerProperties(Map<String, String> kafkaProducerProperties) {
+            if (kafkaProducerProperties == null || kafkaProducerProperties.isEmpty()) {
+                c.kafkaProducerProperties = Collections.emptyMap();
+            } else {
+                c.kafkaProducerProperties = Collections.unmodifiableMap(
+                        new LinkedHashMap<String, String>(kafkaProducerProperties));
+            }
+            return this;
+        }
+
         public MongoMultiSyncConfig build() {
             if (c.sourceMongoClient == null && (c.sourceUri == null || c.sourceUri.trim().isEmpty())) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "sourceUri or sourceMongoClient is required");
             }
-            if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
+            TargetType type = c.targetType == null ? TargetType.MONGODB : c.targetType;
+            if (type == TargetType.KAFKA) {
+                if (c.targetUri == null || c.targetUri.trim().isEmpty()) {
+                    throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
+                            "targetUri (Kafka bootstrap servers) is required when targetType=KAFKA");
+                }
+                if (c.targetMongoClient != null) {
+                    throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                            "targetMongoClient is not used when targetType=KAFKA");
+                }
+            } else if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "targetUri or targetMongoClient is required");
             }

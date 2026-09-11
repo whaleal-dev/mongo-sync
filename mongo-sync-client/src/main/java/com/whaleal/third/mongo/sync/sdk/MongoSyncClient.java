@@ -3,7 +3,6 @@ package com.whaleal.third.mongo.sync.sdk;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
-import com.whaleal.third.mongo.sink.sdk.MongoSinkClient;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.SyncMode;
 import com.whaleal.third.mongo.source.oplog.MongoVersion;
@@ -14,6 +13,7 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.cache.SyncCaches;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.config.TargetType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.meta.CollectionStructureBootstrap;
@@ -22,10 +22,12 @@ import com.whaleal.third.mongo.sync.offset.MemoryOplogOffsetStorage;
 import com.whaleal.third.mongo.sync.offset.MemoryResumeTokenStorage;
 import com.whaleal.third.mongo.sync.pipeline.BucketWritePipeline;
 import com.whaleal.third.mongo.sync.pipeline.IdBucketRouter;
+import com.whaleal.third.mongo.sync.sink.TargetSinkFactory;
 import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
 import com.whaleal.third.mongo.transfer.spi.DdlEventListener;
 import com.whaleal.third.mongo.transfer.spi.TransferEventListener;
+import com.whaleal.third.mongo.transfer.spi.TransferSink;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -40,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Source(Oplog/ChangeStream)
  *   → TransferEvent / DdlEvent
  *   → 分桶（_id hash）+ Caffeine ns/DDL 锁
- *   → Sink 落地
+ *   → Sink 落地（MongoDB 或 Kafka）
  * </pre>
  * <p>
  * 源端架构自动匹配（{@code captureMode=AUTO}，默认）：
@@ -56,7 +58,7 @@ public final class MongoSyncClient implements AutoCloseable {
     private final boolean ownsTargetClient;
     private final SyncCaches caches;
     private final BucketWritePipeline pipeline;
-    private final MongoSinkClient sink;
+    private final TransferSink sink;
     /** 解析后的捕获模式（AUTO 已展开）。 */
     private final CaptureMode resolvedCaptureMode;
     private final SourceTopology sourceTopology;
@@ -87,7 +89,10 @@ public final class MongoSyncClient implements AutoCloseable {
             this.sourceClient = MongoClients.create(config.getSourceUri());
             this.ownsSourceClient = true;
         }
-        if (config.getTargetMongoClient() != null) {
+        if (config.getTargetType() == TargetType.KAFKA) {
+            this.targetClient = null;
+            this.ownsTargetClient = false;
+        } else if (config.getTargetMongoClient() != null) {
             this.targetClient = config.getTargetMongoClient();
             this.ownsTargetClient = config.isCloseTargetClientOnClose();
         } else {
@@ -106,17 +111,14 @@ public final class MongoSyncClient implements AutoCloseable {
 
         boolean orderedWrite = caches.hasUniqueIndex(config.sourceNs());
 
-        this.sink = MongoSinkClient.builder()
-                .mongoClient(targetClient)
-                .closeMongoClientOnClose(false)
-                .database(config.getTargetDatabase())
-                .collection(config.getTargetCollection())
-                .writeMode(config.getWriteMode())
-                .onConflict(config.getOnConflict())
-                .batchSize(config.getTargetBatchSize())
-                .writerThreads(config.getTargetWriterThreads())
-                .ordered(orderedWrite)
-                .build();
+        this.sink = TargetSinkFactory.create(config, targetClient, orderedWrite);
+        System.err.println("[mongo-sync] target-type=" + config.getTargetType()
+                + (config.getTargetType() == TargetType.KAFKA
+                ? (" bootstrap=" + config.getTargetUri()
+                + " topicPrefix=" + config.getKafkaTopicPrefix()
+                + " ns=" + config.getTargetDatabase() + "." + config.getTargetCollection())
+                : (" uri=" + (config.getTargetUri() == null ? "(injected client)" : config.getTargetUri())
+                + " ns=" + config.getTargetDatabase() + "." + config.getTargetCollection())));
 
         IdBucketRouter router = new IdBucketRouter(
                 config.getBucketNum(),
@@ -310,7 +312,8 @@ public final class MongoSyncClient implements AutoCloseable {
             startedAtMs.compareAndSet(0, System.currentTimeMillis());
             migrationState.set(MigrationState.RUNNING);
             stateDetail.set("starting");
-            if (config.isBootstrapCollection() || config.isBootstrapIndexes()) {
+            if (config.getTargetType() != TargetType.KAFKA
+                    && (config.isBootstrapCollection() || config.isBootstrapIndexes())) {
                 CollectionStructureBootstrap.ensureTarget(
                         sourceClient,
                         targetClient,
@@ -321,6 +324,9 @@ public final class MongoSyncClient implements AutoCloseable {
                         config.isBootstrapCollection(),
                         config.isBootstrapIndexes(),
                         config.isSkipTtlIndexes());
+            } else if (config.getTargetType() == TargetType.KAFKA
+                    && (config.isBootstrapCollection() || config.isBootstrapIndexes())) {
+                System.err.println("[mongo-sync] skip bootstrapCollection/indexes: targetType=KAFKA");
             }
             if (source != null) {
                 source.start();

@@ -3,7 +3,8 @@
 **MongoDB 文档同步 SDK / 工具**（Java 8+）
 
 **主路径：MongoDB → MongoDB**（自建 / 云上均支持）。  
-同构兼容目标亦可：Amazon **DocumentDB**、阿里云 **DDS** 等 MongoDB 协议兼容的文档库。
+同构兼容目标亦可：Amazon **DocumentDB**、阿里云 **DDS** 等 MongoDB 协议兼容的文档库。  
+**Kafka 目标**：`target.type=kafka`，把变更写成 mongo-kafka 兼容的 Change Stream 消息，供下游消费或再经 mongo-kafka Sink 落库。
 
 面向迁移、灾备、多活与跨架构搬迁：一套 API / 一条命令，完成 **全量 + 增量**、**DDL 跟随**、**多库表过滤** 与 **数据校验**。设计参考 d2t / MongoShake，并保持可嵌入 Java 业务进程的轻量形态。
 
@@ -22,6 +23,7 @@
 | 诉求 | mongo-sync 怎么做 |
 |------|-------------------|
 | Mongo → Mongo 主路径 | 全量∥增量、DDL、分桶有序写，覆盖迁库 / 灾备主场景 |
+| Mongo → Kafka | `target.type=kafka`，消息格式对齐 mongo-kafka Source（Change Stream JSON/BSON） |
 | 同构上云（DocumentDB / DDS） | 标准 Mongo 驱动写入协议兼容库，便于迁云 |
 | 迁库 / 扩容不停服 | 全量∥增量并行（`FULL_AND_INCREMENTAL`），UPSERT 兜底窗口重复 |
 | 跨架构互传 | 自动识别 standalone / 副本集 / 分片，匹配读任务（Oplog / ChangeStream） |
@@ -39,6 +41,7 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 ## 核心能力一览
 
 - **四种同步模式**：仅全量、全量∥持续增量、全量∥追平后停、仅增量  
+- **双目标形态**：MongoDB（默认）/ Kafka（mongo-kafka Change Stream 消息）  
 - **双捕获通道**：ChangeStream（推荐 / MongoDB 7.0+）；Oplog 3.2–6.0（V1/V2/V3 解析）  
 - **架构自适应**：`capture.mode=AUTO` 按源端拓扑匹配读计划（禁止在 mongos / standalone 上误拉 Oplog）  
 - **多库表**：白/黑名单、`ns` 变换（`MongoMultiSyncClient`）  
@@ -144,6 +147,20 @@ MongoMultiSyncClient multi = MongoMultiSyncClient.create(MongoMultiSyncConfig.bu
 multi.start();
 ```
 
+Kafka 目标（`target.uri` 为 bootstrap servers）：
+
+```java
+MongoSyncClient.create(MongoSyncClient.builder()
+        .sourceUri("mongodb://src/?replicaSet=rs0")
+        .targetUri("127.0.0.1:9092")
+        .targetType(TargetType.KAFKA)
+        .mapCollection("demo", "orders")
+        .kafkaTopicPrefix("mongo")
+        .syncMode(SyncMode.FULL_AND_INCREMENTAL)
+        .offsetStoreDir("./data/offsets")
+        .writeErrorHandler((bucket, event, err) -> { }));
+```
+
 ---
 
 ## 常见问题（FAQ）
@@ -169,6 +186,7 @@ multi.start();
 | [bin/README.md](bin/README.md) | 脚本入口详解 |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | 架构、能力清单与已知限制 |
 | [doc/examples/mongo-sync.example.properties](doc/examples/mongo-sync.example.properties) | 同步配置示例 |
+| [doc/examples/mongo-sync-kafka.example.properties](doc/examples/mongo-sync-kafka.example.properties) | Kafka 目标配置示例 |
 | [doc/examples/mongo-verify.example.properties](doc/examples/mongo-verify.example.properties) | 校验配置示例 |
 | [doc/oplog/](doc/oplog/) | 各版本 Oplog 样例 |
 
@@ -177,6 +195,7 @@ multi.start();
 ## 适用场景
 
 - **MongoDB → MongoDB**：迁库、扩容、跨机房 / 多活（主推）  
+- **MongoDB → Kafka**：变更投递到 Kafka，格式对齐 mongo-kafka Source  
 - **同构上云**：自建 Mongo → DocumentDB / DDS 等协议兼容库  
 - **灾备与只读副本**：持续增量同步到备端  
 - **架构升级**：副本集 ↔ 分片、跨版本（捕获通道随版本自动收紧）  

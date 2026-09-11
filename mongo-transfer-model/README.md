@@ -15,6 +15,7 @@
 | `DdlType` | CREATE/DROP_COLLECTION、DROP_DATABASE、CREATE/DROP_INDEXES、RENAME |
 | `TransferEventListener` | CRUD 回调 |
 | `DdlEventListener` | DDL 回调 |
+| `TransferSink` | 目标写入 SPI（MongoDB / Kafka 等实现） |
 
 ## op 约定
 

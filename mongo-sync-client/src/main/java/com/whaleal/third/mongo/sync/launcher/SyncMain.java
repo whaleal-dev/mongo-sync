@@ -2,11 +2,14 @@ package com.whaleal.third.mongo.sync.launcher;
 
 import com.whaleal.third.mongo.sink.config.OnConflict;
 import com.whaleal.third.mongo.sink.config.WriteMode;
+import com.whaleal.third.mongo.sink.kafka.config.KafkaOutputFormat;
+import com.whaleal.third.mongo.sink.kafka.config.KafkaSinkConfig;
 import com.whaleal.third.mongo.source.config.CaptureMode;
 import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
+import com.whaleal.third.mongo.sync.config.TargetType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.sdk.MigrationProgress;
@@ -19,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -312,8 +317,8 @@ public final class SyncMain {
                 .bucketQueueCapacity(integer(props, "bucket.queue.capacity", 8192))
                 .ddlWaitSeconds(integer(props, "ddl.wait.seconds", 30))
                 .forceSingleBucketOnUniqueIndex(bool(props, "force.single.bucket.on.unique.index", true))
-                .bootstrapCollection(bool(props, "bootstrap.collection", true))
-                .bootstrapIndexes(bool(props, "bootstrap.indexes", true))
+                .bootstrapCollection(bool(props, "bootstrap.collection", defaultBootstrap(props)))
+                .bootstrapIndexes(bool(props, "bootstrap.indexes", defaultBootstrap(props)))
                 .skipTtlIndexes(bool(props, "skip.ttl.indexes", true))
                 .offsetLogIntervalSeconds(integer(props, "offset.log.interval.seconds", 30))
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
@@ -330,6 +335,7 @@ public final class SyncMain {
                                 + " err=" + (error == null ? "null" : error.getMessage()));
                     }
                 });
+        applyKafka(b, props);
 
         String offsetDir = props.getProperty("offset.store.dir");
         if (hasText(offsetDir)) {
@@ -363,8 +369,8 @@ public final class SyncMain {
                 .bucketQueueCapacity(integer(props, "bucket.queue.capacity", 8192))
                 .ddlWaitSeconds(integer(props, "ddl.wait.seconds", 30))
                 .forceSingleBucketOnUniqueIndex(bool(props, "force.single.bucket.on.unique.index", true))
-                .bootstrapCollection(bool(props, "bootstrap.collection", true))
-                .bootstrapIndexes(bool(props, "bootstrap.indexes", true))
+                .bootstrapCollection(bool(props, "bootstrap.collection", defaultBootstrap(props)))
+                .bootstrapIndexes(bool(props, "bootstrap.indexes", defaultBootstrap(props)))
                 .skipTtlIndexes(bool(props, "skip.ttl.indexes", true))
                 .offsetLogIntervalSeconds(integer(props, "offset.log.interval.seconds", 30))
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
@@ -381,6 +387,7 @@ public final class SyncMain {
                                 + " err=" + (error == null ? "null" : error.getMessage()));
                     }
                 });
+        applyKafka(b, props);
 
         String offsetDir = props.getProperty("offset.store.dir");
         if (hasText(offsetDir)) {
@@ -483,6 +490,8 @@ public final class SyncMain {
         parseFullDocument(props);
         parseWriteMode(props);
         parseOnConflict(props);
+        parseTargetType(props);
+        parseKafkaOutputFormat(props);
 
         int progressLogSeconds = integer(props, "progress.log.interval.seconds", 10);
         if (progressLogSeconds < 0) {
@@ -541,6 +550,77 @@ public final class SyncMain {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
                     "invalid on.conflict, expected FAIL|SKIP|UPSERT", e);
         }
+    }
+
+    private static TargetType parseTargetType(Properties props) {
+        try {
+            return TargetType.parse(get(props, "target.type", "MONGODB"));
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid target.type, expected MONGODB|KAFKA", e);
+        }
+    }
+
+    private static KafkaOutputFormat parseKafkaOutputFormat(Properties props) {
+        try {
+            return KafkaOutputFormat.parse(get(props, "kafka.output.format", "JSON"));
+        } catch (IllegalArgumentException e) {
+            throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
+                    "invalid kafka.output.format, expected JSON|BSON", e);
+        }
+    }
+
+    private static boolean defaultBootstrap(Properties props) {
+        return parseTargetType(props) != TargetType.KAFKA;
+    }
+
+    private static void applyKafka(MongoSyncConfig.Builder b, Properties props) {
+        b.targetType(parseTargetType(props))
+                .kafkaTopic(emptyToNull(props.getProperty("kafka.topic")))
+                .kafkaTopicPrefix(get(props, "kafka.topic.prefix", ""))
+                .kafkaTopicSeparator(get(props, "kafka.topic.separator", KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR))
+                .kafkaTopicSuffix(get(props, "kafka.topic.suffix", ""))
+                .kafkaOutputFormat(parseKafkaOutputFormat(props))
+                .kafkaPublishDdl(bool(props, "kafka.publish.ddl", true))
+                .kafkaAcks(get(props, "kafka.acks", KafkaSinkConfig.DEFAULT_ACKS))
+                .kafkaLingerMs(integer(props, "kafka.linger.ms", KafkaSinkConfig.DEFAULT_LINGER_MS))
+                .kafkaBatchSizeBytes(integer(props, "kafka.batch.size", KafkaSinkConfig.DEFAULT_BATCH_SIZE_BYTES))
+                .kafkaCompressionType(get(props, "kafka.compression.type", KafkaSinkConfig.DEFAULT_COMPRESSION))
+                .kafkaClientId(get(props, "kafka.client.id", KafkaSinkConfig.DEFAULT_CLIENT_ID))
+                .kafkaProducerProperties(extractKafkaProducerProps(props));
+    }
+
+    private static void applyKafka(MongoMultiSyncConfig.Builder b, Properties props) {
+        b.targetType(parseTargetType(props))
+                .kafkaTopic(emptyToNull(props.getProperty("kafka.topic")))
+                .kafkaTopicPrefix(get(props, "kafka.topic.prefix", ""))
+                .kafkaTopicSeparator(get(props, "kafka.topic.separator", KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR))
+                .kafkaTopicSuffix(get(props, "kafka.topic.suffix", ""))
+                .kafkaOutputFormat(parseKafkaOutputFormat(props))
+                .kafkaPublishDdl(bool(props, "kafka.publish.ddl", true))
+                .kafkaAcks(get(props, "kafka.acks", KafkaSinkConfig.DEFAULT_ACKS))
+                .kafkaLingerMs(integer(props, "kafka.linger.ms", KafkaSinkConfig.DEFAULT_LINGER_MS))
+                .kafkaBatchSizeBytes(integer(props, "kafka.batch.size", KafkaSinkConfig.DEFAULT_BATCH_SIZE_BYTES))
+                .kafkaCompressionType(get(props, "kafka.compression.type", KafkaSinkConfig.DEFAULT_COMPRESSION))
+                .kafkaClientId(get(props, "kafka.client.id", KafkaSinkConfig.DEFAULT_CLIENT_ID))
+                .kafkaProducerProperties(extractKafkaProducerProps(props));
+    }
+
+    private static Map<String, String> extractKafkaProducerProps(Properties props) {
+        Map<String, String> extra = new LinkedHashMap<String, String>();
+        for (String name : props.stringPropertyNames()) {
+            if (name.startsWith("kafka.producer.")) {
+                extra.put(name.substring("kafka.producer.".length()), props.getProperty(name));
+            }
+        }
+        return extra;
+    }
+
+    private static String emptyToNull(String s) {
+        if (s == null || s.trim().isEmpty()) {
+            return null;
+        }
+        return s.trim();
     }
 
     private static boolean hasText(String s) {

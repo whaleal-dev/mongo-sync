@@ -7,12 +7,12 @@ import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
-import com.whaleal.third.mongo.sink.sdk.MongoSinkClient;
 import com.whaleal.third.mongo.sync.cache.SyncCaches;
 import com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler;
 import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.DdlType;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
+import com.whaleal.third.mongo.transfer.spi.TransferSink;
 import org.bson.Document;
 
 import java.util.ArrayList;
@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class BucketWritePipeline implements AutoCloseable {
 
-    private final MongoSinkClient sink;
+    private final TransferSink sink;
     private final IdBucketRouter router;
     private final SyncCaches caches;
     private final MongoClient sourceClient;
@@ -53,7 +53,7 @@ public final class BucketWritePipeline implements AutoCloseable {
     private final AtomicLong droppedWhenStopped = new AtomicLong(0);
     private final AtomicBoolean dropWarned = new AtomicBoolean(false);
 
-    public BucketWritePipeline(MongoSinkClient sink,
+    public BucketWritePipeline(TransferSink sink,
                                IdBucketRouter router,
                                SyncCaches caches,
                                MongoClient sourceClient,
@@ -335,7 +335,7 @@ public final class BucketWritePipeline implements AutoCloseable {
     private final class BucketHandler implements EventHandler<TransferEventSlot> {
 
         private final int bucketId;
-        /** 本桶尚未确认落库的 _id → 写入序号；随 {@link MongoSinkClient#landedThrough()} 裁剪，有界。 */
+        /** 本桶尚未确认落库的 _id → 写入序号；随 {@link TransferSink#landedThrough()} 裁剪，有界。 */
         private final Map<String, Long> pendingIds = new HashMap<String, Long>();
 
         private BucketHandler(int bucketId) {
