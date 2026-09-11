@@ -46,6 +46,25 @@ public class MongoSourceClient {
         listener.pause();
     }
 
+    /** 仅暂停增量；全量可继续。 */
+    public void pauseIncremental() {
+        listener.pauseIncremental();
+    }
+
+    /** 恢复增量捕获。 */
+    public void resumeIncremental() {
+        listener.resumeIncremental();
+    }
+
+    public boolean isIncrementalPaused() {
+        return listener.isIncrementalPaused();
+    }
+
+    /** 捕获窗口余量（秒）；无法探测时为 null。 */
+    public Long getWindowRemainingSeconds() {
+        return listener.getWindowRemainingSeconds();
+    }
+
     public void stop() {
         listener.stop();
     }
@@ -83,6 +102,7 @@ public class MongoSourceClient {
         private int fullSyncParallelism = MongoSourceConfig.DEFAULT_FULL_SYNC_PARALLELISM;
         private int fullSyncBatchSize = MongoSourceConfig.DEFAULT_FULL_SYNC_BATCH_SIZE;
         private int fullSyncTaskMbSize = MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
+        private int windowWarnSeconds = MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS;
 
         public Builder uri(String uri) {
             this.uri = uri;
@@ -238,6 +258,14 @@ public class MongoSourceClient {
             return this;
         }
 
+        /**
+         * 捕获窗口告警阈值（秒）。默认 3600；{@code <=0} 关闭。
+         */
+        public Builder windowWarnSeconds(int windowWarnSeconds) {
+            this.windowWarnSeconds = windowWarnSeconds;
+            return this;
+        }
+
         public MongoSourceClient build() {
             MongoClient detectClient = this.mongoClient;
             boolean createdForDetect = false;
@@ -303,7 +331,8 @@ public class MongoSourceClient {
                     .offsetLogIntervalSeconds(this.offsetLogIntervalSeconds)
                     .fullSyncParallelism(this.fullSyncParallelism)
                     .fullSyncBatchSize(this.fullSyncBatchSize)
-                    .fullSyncTaskMbSize(this.fullSyncTaskMbSize);
+                    .fullSyncTaskMbSize(this.fullSyncTaskMbSize)
+                    .windowWarnSeconds(this.windowWarnSeconds);
             if (version != null) {
                 configBuilder.mongoVersion(version);
             }

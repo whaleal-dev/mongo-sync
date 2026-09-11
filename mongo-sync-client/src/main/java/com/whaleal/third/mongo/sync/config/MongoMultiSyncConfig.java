@@ -57,6 +57,7 @@ public final class MongoMultiSyncConfig {
     private int fullSyncParallelism = MongoSourceConfig.DEFAULT_FULL_SYNC_PARALLELISM;
     private int fullSyncBatchSize = MongoSourceConfig.DEFAULT_FULL_SYNC_BATCH_SIZE;
     private int fullSyncTaskMbSize = MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
+    private int windowWarnSeconds = MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS;
 
     private long commitMaxLagMs = MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS;
 
@@ -181,6 +182,10 @@ public final class MongoMultiSyncConfig {
 
     public int getFullSyncTaskMbSize() {
         return fullSyncTaskMbSize;
+    }
+
+    public int getWindowWarnSeconds() {
+        return windowWarnSeconds;
     }
 
     public long getCommitMaxLagMs() {
@@ -368,6 +373,12 @@ public final class MongoMultiSyncConfig {
         public Builder fullSyncTaskMbSize(int fullSyncTaskMbSize) {
             c.fullSyncTaskMbSize = fullSyncTaskMbSize > 0
                     ? fullSyncTaskMbSize : MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
+            return this;
+        }
+
+        /** 捕获窗口告警阈值（秒）。默认 3600；{@code <=0} 关闭。 */
+        public Builder windowWarnSeconds(int windowWarnSeconds) {
+            c.windowWarnSeconds = windowWarnSeconds;
             return this;
         }
 

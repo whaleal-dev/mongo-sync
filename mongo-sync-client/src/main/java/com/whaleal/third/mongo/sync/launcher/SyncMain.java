@@ -125,7 +125,9 @@ public final class SyncMain {
                             multiClient.resume();
                             return multiClient.progress();
                         },
-                        () -> multiClient.commit()));
+                        () -> multiClient.commit(),
+                        () -> multiClient.pauseIncremental(),
+                        () -> multiClient.resumeIncremental()));
                 System.err.println("[mongo-sync] http control listening at http://" + httpHost + ":" + httpPort);
             }
             scheduleProgress(progressExecutor, progressLogSeconds, stop, autoCommitWhenReady, multiClient);
@@ -151,7 +153,9 @@ public final class SyncMain {
                             sync.resume();
                             return sync.progress();
                         },
-                        () -> sync.commit()));
+                        () -> sync.commit(),
+                        () -> sync.pauseIncremental(),
+                        () -> sync.resumeIncremental()));
                 System.err.println("[mongo-sync] http control listening at http://" + httpHost + ":" + httpPort);
             }
             scheduleProgress(progressExecutor, progressLogSeconds, stop, autoCommitWhenReady, sync);
@@ -237,6 +241,10 @@ public final class SyncMain {
         }
         appendKv(sb, "canCommit", String.valueOf(p.isCanCommit()));
         appendKv(sb, "readiness", p.getCommitReadiness());
+        appendKv(sb, "incrPaused", String.valueOf(p.isIncrementalPaused()));
+        if (p.getWindowRemainingSeconds() != null) {
+            appendKv(sb, "windowRemainingSec", String.valueOf(p.getWindowRemainingSeconds()));
+        }
         if (p.getElapsedMs() > 0) {
             appendKv(sb, "elapsedMs", String.valueOf(p.getElapsedMs()));
         }
@@ -311,6 +319,8 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .windowWarnSeconds(integer(props, "window.warn.seconds",
+                        MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS))
                 .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override
@@ -360,6 +370,8 @@ public final class SyncMain {
                 .fullSyncParallelism(integer(props, "full.sync.parallelism", 1))
                 .fullSyncBatchSize(integer(props, "full.sync.batch.size", 1000))
                 .fullSyncTaskMbSize(integer(props, "full.sync.task.mb.size", 32))
+                .windowWarnSeconds(integer(props, "window.warn.seconds",
+                        MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS))
                 .commitMaxLagMs(longProp(props, "commit.max.lag.ms", MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS))
                 .writeErrorHandler(new com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler() {
                     @Override

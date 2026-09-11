@@ -133,6 +133,7 @@ multi.start();
 | `namespaceTransform` | `src.ns:tgt.ns` 映射 |
 | `offsetStoreDir` | 文件位点（单表 `MongoSyncClient` 同样支持） |
 | `commitMaxLagMs` | `canCommit` 允许的最大增量滞后（默认 10000ms） |
+| `windowWarnSeconds` | 捕获窗口告警阈值（秒，默认 3600；`<=0` 关闭） |
 | `captureMode` | 默认 `AUTO`：按源端架构匹配读任务 |
 
 ### 源端架构自动匹配读任务

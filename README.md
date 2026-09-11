@@ -45,6 +45,8 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 - **元数据**：`bootstrapCollection` / `bootstrapIndexes` 可分别开关；支持跳过 TTL 索引  
 - **位点**：可选文件持久化（`offset.store.dir`）+ 周期心跳日志  
 - **迁移状态机**：`MigrationProgress` / `canCommit` / `commit`；`canCommit` 要求全量完成、pipeline 排空，且增量滞后 ≤ `commit.max.lag.ms`（默认 10000）  
+- **捕获窗口告警**：全量∥增量期间监控锚定位点相对 oplog 最早条目的余量（`window.warn.seconds`，默认 3600）；逼近阈值打 `WINDOW WARN`  
+- **独立增量 pause**：`pauseIncremental` / `resumeIncremental`（全量可继续；HTTP：`/api/v1/pauseIncremental`）  
 - **校验**：`VerifyMain` 支持单表 / 多表白名单  
 
 ---

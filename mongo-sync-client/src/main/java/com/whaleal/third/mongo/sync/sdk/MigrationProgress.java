@@ -28,6 +28,10 @@ public final class MigrationProgress {
     private final long namespaceCount;
     private final String detail;
     private final String commitReadiness;
+    /** 增量是否处于独立暂停（全量可继续）。 */
+    private final boolean incrementalPaused;
+    /** 捕获窗口余量（秒）；无法探测为 null。 */
+    private final Long windowRemainingSeconds;
 
     public MigrationProgress(String namespace,
                              String phase,
@@ -50,6 +54,35 @@ public final class MigrationProgress {
                              long namespaceCount,
                              String detail,
                              String commitReadiness) {
+        this(namespace, phase, topology, captureMode, syncMode, state, canCommit, fullSyncComplete,
+                estimatedTotalDocuments, snapshotEvents, incrementalEvents, ddlEvents, inflightEvents,
+                lastEventTsMs, startedAtMs, committedAtMs, elapsedMs, lagMs, namespaceCount, detail,
+                commitReadiness, false, null);
+    }
+
+    public MigrationProgress(String namespace,
+                             String phase,
+                             String topology,
+                             String captureMode,
+                             String syncMode,
+                             MigrationState state,
+                             boolean canCommit,
+                             boolean fullSyncComplete,
+                             long estimatedTotalDocuments,
+                             long snapshotEvents,
+                             long incrementalEvents,
+                             long ddlEvents,
+                             long inflightEvents,
+                             Long lastEventTsMs,
+                             long startedAtMs,
+                             Long committedAtMs,
+                             long elapsedMs,
+                             Long lagMs,
+                             long namespaceCount,
+                             String detail,
+                             String commitReadiness,
+                             boolean incrementalPaused,
+                             Long windowRemainingSeconds) {
         this.namespace = namespace;
         this.phase = phase;
         this.topology = topology;
@@ -71,6 +104,8 @@ public final class MigrationProgress {
         this.namespaceCount = namespaceCount;
         this.detail = detail;
         this.commitReadiness = commitReadiness;
+        this.incrementalPaused = incrementalPaused;
+        this.windowRemainingSeconds = windowRemainingSeconds;
     }
 
     public String getNamespace() {
@@ -157,6 +192,14 @@ public final class MigrationProgress {
         return commitReadiness;
     }
 
+    public boolean isIncrementalPaused() {
+        return incrementalPaused;
+    }
+
+    public Long getWindowRemainingSeconds() {
+        return windowRemainingSeconds;
+    }
+
     public long getCopiedDocuments() {
         return snapshotEvents;
     }
@@ -203,6 +246,8 @@ public final class MigrationProgress {
         doc.put("namespaceCount", namespaceCount);
         doc.put("detail", detail);
         doc.put("commitReadiness", commitReadiness);
+        doc.put("incrementalPaused", incrementalPaused);
+        doc.put("windowRemainingSeconds", windowRemainingSeconds);
         return doc;
     }
 
@@ -231,6 +276,8 @@ public final class MigrationProgress {
                 + ", elapsedMs=" + elapsedMs
                 + ", lagMs=" + lagMs
                 + ", namespaceCount=" + namespaceCount
+                + ", incrementalPaused=" + incrementalPaused
+                + ", windowRemainingSeconds=" + windowRemainingSeconds
                 + ", commitReadiness='" + commitReadiness + '\''
                 + ", detail='" + detail + '\''
                 + '}';

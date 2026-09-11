@@ -15,7 +15,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
 /**
- * 轻量 HTTP 控制面：对齐 mongosync 常见的 progress / pause / resume / commit 能力。
+ * 轻量 HTTP 控制面：对齐 mongosync 常见的 progress / pause / resume / commit 能力，
+ * 并补充 pauseIncremental / resumeIncremental。
  */
 final class SyncHttpServer implements AutoCloseable {
 
@@ -31,11 +32,28 @@ final class SyncHttpServer implements AutoCloseable {
                                 Callable<MigrationProgress> pauseAction,
                                 Callable<MigrationProgress> resumeAction,
                                 Callable<MigrationProgress> commitAction) throws IOException {
+        return start(host, port, progressAction, pauseAction, resumeAction, commitAction, null, null);
+    }
+
+    static SyncHttpServer start(String host,
+                                int port,
+                                Callable<MigrationProgress> progressAction,
+                                Callable<MigrationProgress> pauseAction,
+                                Callable<MigrationProgress> resumeAction,
+                                Callable<MigrationProgress> commitAction,
+                                Callable<MigrationProgress> pauseIncrementalAction,
+                                Callable<MigrationProgress> resumeIncrementalAction) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.createContext("/api/v1/progress", jsonHandler("GET", progressAction));
         server.createContext("/api/v1/pause", jsonHandler("POST", pauseAction));
         server.createContext("/api/v1/resume", jsonHandler("POST", resumeAction));
         server.createContext("/api/v1/commit", jsonHandler("POST", commitAction));
+        if (pauseIncrementalAction != null) {
+            server.createContext("/api/v1/pauseIncremental", jsonHandler("POST", pauseIncrementalAction));
+        }
+        if (resumeIncrementalAction != null) {
+            server.createContext("/api/v1/resumeIncremental", jsonHandler("POST", resumeIncrementalAction));
+        }
         server.createContext("/api/v1/canCommit", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {
@@ -48,7 +66,9 @@ final class SyncHttpServer implements AutoCloseable {
                     writeJson(exchange, 200, new Document("success", true)
                             .append("canCommit", progress.isCanCommit())
                             .append("state", progress.getState() == null ? null : progress.getState().name())
-                            .append("commitReadiness", progress.getCommitReadiness()));
+                            .append("commitReadiness", progress.getCommitReadiness())
+                            .append("incrementalPaused", progress.isIncrementalPaused())
+                            .append("windowRemainingSeconds", progress.getWindowRemainingSeconds()));
                 } catch (Exception e) {
                     writeJson(exchange, 500, errorDoc(e));
                 }

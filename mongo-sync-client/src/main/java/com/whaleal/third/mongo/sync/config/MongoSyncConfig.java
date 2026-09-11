@@ -81,6 +81,12 @@ public class MongoSyncConfig {
     /** 单段全量任务目标体积（MB），默认 32。 */
     private int fullSyncTaskMbSize = MongoSourceConfig.DEFAULT_FULL_SYNC_TASK_MB_SIZE;
 
+    /**
+     * 捕获窗口告警阈值（秒）。全量∥增量时监控锚定位点相对 oplog 最早条目的余量。
+     * 默认 3600；{@code <=0} 关闭。
+     */
+    private int windowWarnSeconds = MongoSourceConfig.DEFAULT_WINDOW_WARN_SECONDS;
+
     /** 允许 commit 的最大增量滞后（毫秒）；仅含增量模式生效。 */
     private long commitMaxLagMs = DEFAULT_COMMIT_MAX_LAG_MS;
 
@@ -237,6 +243,10 @@ public class MongoSyncConfig {
 
     public int getFullSyncTaskMbSize() {
         return fullSyncTaskMbSize;
+    }
+
+    public int getWindowWarnSeconds() {
+        return windowWarnSeconds;
     }
 
     public long getCommitMaxLagMs() {
@@ -503,8 +513,17 @@ public class MongoSyncConfig {
         }
 
         /**
+         * 捕获窗口告警阈值（秒）。默认 3600；{@code <=0} 关闭。
+         * 全量∥增量期间：锚定位点 − oplog 最早条目。
+         */
+        public Builder windowWarnSeconds(int windowWarnSeconds) {
+            c.windowWarnSeconds = windowWarnSeconds;
+            return this;
+        }
+
+        /**
          * 允许 commit 的最大增量滞后（毫秒）。默认 10000。
-         * 仅 {@link SyncMode#includeIncremental()} 时参与 {@code canCommit} 判定。
+         * 仅 {@link SyncMode#includesIncremental()} 时参与 {@code canCommit} 判定。
          */
         public Builder commitMaxLagMs(long commitMaxLagMs) {
             c.commitMaxLagMs = commitMaxLagMs > 0L

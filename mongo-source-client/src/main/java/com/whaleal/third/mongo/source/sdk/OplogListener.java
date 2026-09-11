@@ -50,6 +50,7 @@ public class OplogListener extends AbstractSourceListener {
             latest = new BsonTimestamp((int) (System.currentTimeMillis() / 1000L), 1);
         }
         initialSyncStartTs = latest;
+        setCaptureAnchor(latest);
         saveOplogOffset(OplogOffset.of(latest));
     }
 
@@ -78,6 +79,10 @@ public class OplogListener extends AbstractSourceListener {
         }
 
         while (running.get()) {
+            awaitIncrementalIfPaused();
+            if (!running.get()) {
+                break;
+            }
             try {
                 ensureConnection();
                 OplogFetcher fetcher = createFetcher();
@@ -99,6 +104,9 @@ public class OplogListener extends AbstractSourceListener {
                 BsonTimestamp endAtOpen = resolveEndTimestamp();
                 try (MongoCursor<BsonDocument> cursor = fetcher.openCursor(startTs, endAtOpen)) {
                     while (running.get()) {
+                        if (isIncrementalPaused()) {
+                            break;
+                        }
                         if (!cursor.hasNext()) {
                             // tailable maxAwait 到期或有界游标耗尽
                             break;

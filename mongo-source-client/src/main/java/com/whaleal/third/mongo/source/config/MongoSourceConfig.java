@@ -61,6 +61,12 @@ public class MongoSourceConfig {
     private int fullSyncBatchSize = DEFAULT_FULL_SYNC_BATCH_SIZE;
     /** 单段任务目标数据量（MB），用于估算 skip 切段大小。 */
     private int fullSyncTaskMbSize = DEFAULT_FULL_SYNC_TASK_MB_SIZE;
+    /**
+     * 捕获窗口告警阈值（秒）。全量∥增量时，锚定位点相对 oplog 最早条目的余量
+     * 低于该值则打 WINDOW WARN。默认 3600；{@code <=0} 关闭。
+     */
+    public static final int DEFAULT_WINDOW_WARN_SECONDS = 3600;
+    private int windowWarnSeconds = DEFAULT_WINDOW_WARN_SECONDS;
 
     private MongoSourceConfig() {
     }
@@ -193,6 +199,14 @@ public class MongoSourceConfig {
         return fullSyncTaskMbSize;
     }
 
+    /**
+     * 捕获窗口告警阈值（秒）。全量∥增量期间：锚定位点 − oplog 最早条目。
+     * {@code <=0} 表示关闭窗口检查。
+     */
+    public int getWindowWarnSeconds() {
+        return windowWarnSeconds;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -232,6 +246,7 @@ public class MongoSourceConfig {
         private int fullSyncParallelism = DEFAULT_FULL_SYNC_PARALLELISM;
         private int fullSyncBatchSize = DEFAULT_FULL_SYNC_BATCH_SIZE;
         private int fullSyncTaskMbSize = DEFAULT_FULL_SYNC_TASK_MB_SIZE;
+        private int windowWarnSeconds = DEFAULT_WINDOW_WARN_SECONDS;
 
         public Builder uri(String uri) {
             this.uri = uri;
@@ -406,6 +421,15 @@ public class MongoSourceConfig {
             return this;
         }
 
+        /**
+         * 捕获窗口告警阈值（秒）。默认 3600；{@code <=0} 关闭。
+         * 全量∥增量时监控锚定位点相对 oplog 最早条目的余量。
+         */
+        public Builder windowWarnSeconds(int windowWarnSeconds) {
+            this.windowWarnSeconds = windowWarnSeconds;
+            return this;
+        }
+
         public MongoSourceConfig build() {
             if (mongoClient == null && (uri == null || uri.trim().isEmpty())) {
                 throw new IllegalArgumentException("uri or mongoClient is required");
@@ -469,6 +493,7 @@ public class MongoSourceConfig {
             config.fullSyncParallelism = this.fullSyncParallelism;
             config.fullSyncBatchSize = this.fullSyncBatchSize;
             config.fullSyncTaskMbSize = this.fullSyncTaskMbSize;
+            config.windowWarnSeconds = this.windowWarnSeconds;
             return config;
         }
     }

@@ -227,7 +227,8 @@ public final class MongoSyncClient implements AutoCloseable {
                 .offsetLogIntervalSeconds(config.getOffsetLogIntervalSeconds())
                 .fullSyncParallelism(config.getFullSyncParallelism())
                 .fullSyncBatchSize(config.getFullSyncBatchSize())
-                .fullSyncTaskMbSize(config.getFullSyncTaskMbSize());
+                .fullSyncTaskMbSize(config.getFullSyncTaskMbSize())
+                .windowWarnSeconds(config.getWindowWarnSeconds());
 
         if (afterFull != null) {
             sourceBuilder.afterFullSyncBarrier(afterFull);
@@ -348,7 +349,8 @@ public final class MongoSyncClient implements AutoCloseable {
         }
         if (started.get() && config.getSyncMode().includesFull() && !fullSyncComplete.get()) {
             throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
-                    "pause during initial full sync is blocked to avoid snapshot replay/duplication; wait until full sync completes");
+                    "pause during initial full sync is blocked to avoid snapshot replay/duplication; "
+                            + "use pauseIncremental() to freeze CDC while full sync continues");
         }
         if (!started.get()) {
             throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
@@ -365,6 +367,61 @@ public final class MongoSyncClient implements AutoCloseable {
         pipeline.tryDrainAndFlush(Math.max(config.getDdlWaitSeconds(), 30));
         stateDetail.set("paused");
         return progress();
+    }
+
+    /**
+     * 仅暂停增量捕获，全量扫描可继续（对齐 photon REAL_TIME_SLEEP）。
+     * 全量进行中可用；已整体 pause 时不可用。
+     */
+    public synchronized MigrationProgress pauseIncremental() {
+        if (stopped.get()) {
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "sync client already stopped");
+        }
+        if (!started.get()) {
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "cannot pauseIncremental before start");
+        }
+        MigrationState current = migrationState.get();
+        if (current == MigrationState.COMMITTED || current == MigrationState.COMMITTING
+                || current == MigrationState.PAUSED) {
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "cannot pauseIncremental in state=" + current);
+        }
+        if (!config.getSyncMode().includesIncremental()) {
+            throw new MongoSyncException(MongoSyncErrorCode.PAUSE_NOT_ALLOWED,
+                    "syncMode has no incremental capture");
+        }
+        if (source != null) {
+            source.pauseIncremental();
+        }
+        stateDetail.set("incremental paused");
+        return progress();
+    }
+
+    /** 恢复增量捕获。 */
+    public synchronized MigrationProgress resumeIncremental() {
+        if (stopped.get()) {
+            throw new MongoSyncException(MongoSyncErrorCode.CLIENT_STATE_INVALID,
+                    "sync client already stopped");
+        }
+        if (paused.get()) {
+            throw new MongoSyncException(MongoSyncErrorCode.RESUME_NOT_ALLOWED,
+                    "migration is fully paused; call resume() instead of resumeIncremental()");
+        }
+        if (source != null) {
+            source.resumeIncremental();
+        }
+        if (started.get() && migrationState.get() != MigrationState.COMMITTED
+                && migrationState.get() != MigrationState.COMMITTING) {
+            stateDetail.set("running");
+            refreshCommitState();
+        }
+        return progress();
+    }
+
+    public boolean isIncrementalPaused() {
+        return source != null && source.isIncrementalPaused();
     }
 
     public void stop() {
@@ -406,7 +463,9 @@ public final class MongoSyncClient implements AutoCloseable {
                 lagMs,
                 1,
                 stateDetail.get(),
-                commitReadinessOf(state));
+                commitReadinessOf(state),
+                isIncrementalPaused(),
+                source == null ? null : source.getWindowRemainingSeconds());
     }
 
     /**

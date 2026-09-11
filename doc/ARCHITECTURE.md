@@ -68,6 +68,8 @@ MongoSourceClient
 | 多库表白/黑名单 + ns 变换（`MongoMultiSyncClient`） | ✅ |
 | 分片增量 ChangeStream@mongos（≥3.6；多分片 OPLOG 已移除） | ✅ |
 | `canCommit` + `commit.max.lag.ms` | ✅ |
+| 捕获窗口告警（`window.warn.seconds`） | ✅ |
+| 独立增量 pause（`pauseIncremental`） | ✅ |
 | 数据比对校验（`VerifyMain`：COUNT/ID/FULL） | ✅ |
 | 位点文件持久化（`offsetStoreDir`，按 ns） | ✅ |
 | 位点周期心跳日志 | ✅ |

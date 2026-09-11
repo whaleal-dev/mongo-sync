@@ -47,6 +47,7 @@ public class ChangeStreamListener extends AbstractSourceListener {
         ensureConnection();
         // 快照开始前记下 clusterTime，并清旧 token；随后与全量并行开增量
         startAtOperationTime = readClusterTime();
+        setCaptureAnchor(startAtOperationTime);
         saveResumeToken(ResumeToken.empty(), startAtOperationTime);
         reportOffsetProgress("changeStream-start", startAtOperationTime, "phase=beforeFull");
     }
@@ -65,6 +66,10 @@ public class ChangeStreamListener extends AbstractSourceListener {
         ResumeToken resumeToken = loadResumeToken();
 
         while (running.get()) {
+            awaitIncrementalIfPaused();
+            if (!running.get()) {
+                break;
+            }
             try {
                 ensureConnection();
                 BsonTimestamp endTs = resolveEndTimestamp();
@@ -86,6 +91,9 @@ public class ChangeStreamListener extends AbstractSourceListener {
                 try (MongoChangeStreamCursor<ChangeStreamDocument<BsonDocument>> cursor =
                              changeStreamIterable.cursor()) {
                     while (running.get()) {
+                        if (isIncrementalPaused()) {
+                            break;
+                        }
                         ChangeStreamDocument<BsonDocument> changeStreamDocument;
                         if (endTs != null || config.isCatchUpThenStop()) {
                             changeStreamDocument = cursor.tryNext();

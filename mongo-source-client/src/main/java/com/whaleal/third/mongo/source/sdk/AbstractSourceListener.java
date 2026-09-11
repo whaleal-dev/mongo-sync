@@ -12,6 +12,9 @@ import com.whaleal.third.mongo.source.exception.SourceConnectException;
 import com.whaleal.third.mongo.source.exception.SourceHistoryLostException;
 import com.whaleal.third.mongo.source.exception.SourceOffsetException;
 import com.whaleal.third.mongo.source.full.FullSyncRangeSplitter;
+import com.whaleal.third.mongo.source.oplog.CaptureWindowGuard;
+import com.whaleal.third.mongo.source.oplog.OplogFetcher;
+import com.whaleal.third.mongo.source.oplog.OplogFormatVersion;
 import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.DdlType;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
@@ -46,6 +49,8 @@ public abstract class AbstractSourceListener implements SourceListener {
     protected final AtomicBoolean stopped = new AtomicBoolean(false);
     /** pause 后为 true；resume 时只续读增量，不重跑全量、不清位点。 */
     private final AtomicBoolean paused = new AtomicBoolean(false);
+    /** 仅暂停增量；全量扫描不受影响（photon REAL_TIME_SLEEP）。 */
+    private final AtomicBoolean incrementalPaused = new AtomicBoolean(false);
     /** 首次全量（若配置）已完成；resume 依赖此标志。 */
     private final AtomicBoolean initialSyncFinished = new AtomicBoolean(false);
     /**
@@ -59,6 +64,13 @@ public abstract class AbstractSourceListener implements SourceListener {
     private ScheduledExecutorService offsetLogScheduler;
     /** 最近一次推进的位点摘要，供周期心跳 / 异常日志使用。 */
     private final AtomicReference<String> lastOffsetSnapshot = new AtomicReference<String>(null);
+    /** 全量开始前的捕获锚点（oplog ts / clusterTime），用于窗口余量。 */
+    private final AtomicReference<BsonTimestamp> captureAnchorTs = new AtomicReference<BsonTimestamp>(null);
+    /** 最近一次增量同步时间戳。 */
+    private final AtomicReference<BsonTimestamp> lastSyncTs = new AtomicReference<BsonTimestamp>(null);
+    /** 锚定位点相对 oplog 最早条目的余量（秒）；无法探测则为 null。 */
+    private final AtomicReference<Long> windowRemainingSeconds = new AtomicReference<Long>(null);
+    private final AtomicBoolean windowUnavailableLogged = new AtomicBoolean(false);
 
     protected AbstractSourceListener(MongoSourceConfig config) {
         this.config = config;
@@ -225,6 +237,39 @@ public abstract class AbstractSourceListener implements SourceListener {
         pauseInternal("pause");
     }
 
+    @Override
+    public void pauseIncremental() {
+        if (stopped.get()) {
+            throw new IllegalStateException("CDC listener already stopped");
+        }
+        if (incrementalPaused.compareAndSet(false, true)) {
+            System.err.println("[mongo-source] incremental paused ns="
+                    + config.getDatabase() + '.' + config.getCollection());
+            logOffsetSnapshot("pauseIncremental");
+        }
+    }
+
+    @Override
+    public void resumeIncremental() {
+        if (stopped.get()) {
+            throw new IllegalStateException("CDC listener already stopped");
+        }
+        if (incrementalPaused.compareAndSet(true, false)) {
+            System.err.println("[mongo-source] incremental resumed ns="
+                    + config.getDatabase() + '.' + config.getCollection());
+        }
+    }
+
+    @Override
+    public boolean isIncrementalPaused() {
+        return incrementalPaused.get();
+    }
+
+    @Override
+    public Long getWindowRemainingSeconds() {
+        return windowRemainingSeconds.get();
+    }
+
     private void pauseInternal(String reason) {
         paused.set(true);
         running.set(false);
@@ -236,6 +281,27 @@ public abstract class AbstractSourceListener implements SourceListener {
         offsetLogScheduler = null;
         incrementalExecutor = null;
         coordinatorExecutor = null;
+    }
+
+    /**
+     * 增量循环在打开游标前调用：独立 pause 时阻塞，全量扫描不受影响。
+     */
+    protected final void awaitIncrementalIfPaused() {
+        while (running.get() && !stopped.get() && incrementalPaused.get()) {
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /** 全量开始前记下捕获锚点，供窗口余量告警。 */
+    protected final void setCaptureAnchor(BsonTimestamp anchor) {
+        if (anchor != null) {
+            captureAnchorTs.set(anchor);
+        }
     }
 
     private static void shutdownExecutor(ExecutorService executor) {
@@ -251,10 +317,18 @@ public abstract class AbstractSourceListener implements SourceListener {
     }
 
     private void startOffsetLogHeartbeat() {
-        int intervalSec = config.getOffsetLogIntervalSeconds();
-        if (intervalSec <= 0) {
+        int offsetInterval = config.getOffsetLogIntervalSeconds();
+        int warnSec = config.getWindowWarnSeconds();
+        // 位点心跳关闭时，若开启窗口告警仍起调度（默认 30s）
+        int intervalSec;
+        if (offsetInterval > 0) {
+            intervalSec = offsetInterval;
+        } else if (warnSec > 0) {
+            intervalSec = 30;
+        } else {
             return;
         }
+        final boolean logOffset = offsetInterval > 0;
         offsetLogScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, listenerThreadName() + "-offset-log");
             t.setDaemon(true);
@@ -266,9 +340,73 @@ public abstract class AbstractSourceListener implements SourceListener {
                 if (!running.get() || stopped.get()) {
                     return;
                 }
-                logOffsetSnapshot("heartbeat");
+                checkCaptureWindow();
+                if (logOffset) {
+                    logOffsetSnapshot("heartbeat");
+                }
             }
         }, intervalSec, intervalSec, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 监控锚定位点相对 oplog 最早条目的余量；低于 {@code windowWarnSeconds} 打 WINDOW WARN。
+     * mongos / 无 oplog 权限时安静跳过（仅首次提示）。
+     */
+    protected void checkCaptureWindow() {
+        int warnSec = config.getWindowWarnSeconds();
+        if (warnSec <= 0) {
+            windowRemainingSeconds.set(null);
+            return;
+        }
+        BsonTimestamp anchor = lastSyncTs.get();
+        if (anchor == null) {
+            anchor = captureAnchorTs.get();
+        }
+        if (anchor == null) {
+            return;
+        }
+        BsonTimestamp earliest = readEarliestOplogTimestampQuiet();
+        if (earliest == null) {
+            windowRemainingSeconds.set(null);
+            if (windowUnavailableLogged.compareAndSet(false, true)) {
+                System.err.println("[mongo-source] WINDOW check unavailable "
+                        + "(cannot read local.oplog.rs earliest; typical on mongos) ns="
+                        + config.getDatabase() + '.' + config.getCollection());
+            }
+            return;
+        }
+        Long remaining = CaptureWindowGuard.remainingSeconds(anchor, earliest);
+        windowRemainingSeconds.set(remaining);
+        if (CaptureWindowGuard.shouldWarn(remaining, warnSec)) {
+            System.err.println("[mongo-source] WINDOW WARN remaining=" + remaining + "s"
+                    + " threshold=" + warnSec + "s"
+                    + " anchor=" + formatBsonTimestamp(anchor)
+                    + " earliest=" + formatBsonTimestamp(earliest)
+                    + " ns=" + config.getDatabase() + '.' + config.getCollection()
+                    + " fullDone=" + initialSyncFinished.get()
+                    + " incrPaused=" + incrementalPaused.get());
+        }
+    }
+
+    private BsonTimestamp readEarliestOplogTimestampQuiet() {
+        try {
+            ensureConnection();
+            if (mongoClient == null) {
+                return null;
+            }
+            OplogFormatVersion fmt = config.getOplogFormatVersion() != null
+                    ? config.getOplogFormatVersion()
+                    : OplogFormatVersion.V2;
+            return new OplogFetcher(
+                    mongoClient,
+                    config.getDatabase(),
+                    config.getCollection(),
+                    fmt,
+                    Math.max(1, config.getOplogBatchSize()),
+                    config.isIncludeFromMigrate()).readEarliestTimestamp();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -279,6 +417,9 @@ public abstract class AbstractSourceListener implements SourceListener {
      * @param detail      额外信息（如 resume token 摘要）
      */
     protected void reportOffsetProgress(String kind, BsonTimestamp syncTs, String detail) {
+        if (syncTs != null) {
+            lastSyncTs.set(syncTs);
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("kind=").append(kind == null ? "?" : kind);
         sb.append(" ns=").append(config.getDatabase()).append('.').append(config.getCollection());
@@ -287,6 +428,13 @@ public abstract class AbstractSourceListener implements SourceListener {
             sb.append(" ts={t=").append(syncTs.getTime()).append(",i=").append(syncTs.getInc()).append('}');
         } else {
             sb.append(" syncTime=unknown");
+        }
+        Long window = windowRemainingSeconds.get();
+        if (window != null) {
+            sb.append(" windowRemaining=").append(window).append('s');
+        }
+        if (incrementalPaused.get()) {
+            sb.append(" incrPaused=true");
         }
         if (detail != null && !detail.isEmpty()) {
             sb.append(' ').append(detail);

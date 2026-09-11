@@ -136,6 +136,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .fullSyncParallelism(config.getFullSyncParallelism())
                         .fullSyncBatchSize(config.getFullSyncBatchSize())
                         .fullSyncTaskMbSize(config.getFullSyncTaskMbSize())
+                        .windowWarnSeconds(config.getWindowWarnSeconds())
                         .commitMaxLagMs(config.getCommitMaxLagMs());
 
                 if (config.getMongoVersion() != null) {
@@ -199,6 +200,30 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         return p;
     }
 
+    public synchronized MigrationProgress pauseIncremental() {
+        List<ChildFailure> failures = applyToAllChildren(new ChildTask() {
+            @Override
+            public void apply(MongoSyncClient child) {
+                child.pauseIncremental();
+            }
+        });
+        MigrationProgress p = progress();
+        throwIfPartialFailures("pauseIncremental", failures, p);
+        return p;
+    }
+
+    public synchronized MigrationProgress resumeIncremental() {
+        List<ChildFailure> failures = applyToAllChildren(new ChildTask() {
+            @Override
+            public void apply(MongoSyncClient child) {
+                child.resumeIncremental();
+            }
+        });
+        MigrationProgress p = progress();
+        throwIfPartialFailures("resumeIncremental", failures, p);
+        return p;
+    }
+
     public void resume() {
         for (MongoSyncClient child : children) {
             child.start();
@@ -238,6 +263,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         Long lastEventTs = null;
         Long lagMs = null;
         boolean fullComplete = true;
+        boolean anyIncrPaused = false;
+        Long minWindow = null;
 
         for (MongoSyncClient child : children) {
             MigrationProgress p = child.progress();
@@ -265,6 +292,13 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             if (p.getLagMs() != null && (lagMs == null || p.getLagMs() > lagMs.longValue())) {
                 lagMs = p.getLagMs();
             }
+            if (p.isIncrementalPaused()) {
+                anyIncrPaused = true;
+            }
+            if (p.getWindowRemainingSeconds() != null
+                    && (minWindow == null || p.getWindowRemainingSeconds() < minWindow.longValue())) {
+                minWindow = p.getWindowRemainingSeconds();
+            }
         }
         Long committedAt = allCommitted ? maxCommittedAt : null;
 
@@ -289,7 +323,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                 lagMs,
                 children.size(),
                 "collections=" + children.size(),
-                canCommit() ? "ready" : "waiting child migrations");
+                canCommit() ? "ready" : "waiting child migrations",
+                anyIncrPaused,
+                minWindow);
     }
 
     public synchronized MigrationProgress commit() {
