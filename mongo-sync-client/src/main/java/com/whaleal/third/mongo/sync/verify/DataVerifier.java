@@ -18,25 +18,25 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 源/目标集合数据比对（count / _id / 全文）。
+ * 源/Sink 集合数据比对（count / _id / 全文）。
  */
 public final class DataVerifier {
 
     private final MongoClient sourceClient;
-    private final MongoClient targetClient;
+    private final MongoClient sinkClient;
     private final VerifyMode mode;
     private final Set<String> ignoreFields;
     private final int maxSampleDiffs;
     private final int batchSize;
 
     public DataVerifier(MongoClient sourceClient,
-                        MongoClient targetClient,
+                        MongoClient sinkClient,
                         VerifyMode mode,
                         Set<String> ignoreFields,
                         int maxSampleDiffs,
                         int batchSize) {
         this.sourceClient = sourceClient;
-        this.targetClient = targetClient;
+        this.sinkClient = sinkClient;
         this.mode = mode == null ? VerifyMode.FULL : mode;
         this.ignoreFields = ignoreFields == null
                 ? new HashSet<String>()
@@ -47,35 +47,35 @@ public final class DataVerifier {
 
     public CollectionVerifyReport verify(String sourceDatabase,
                                          String sourceCollection,
-                                         String targetDatabase,
-                                         String targetCollection) {
+                                         String sinkDatabase,
+                                         String sinkCollection) {
         String sourceNs = sourceDatabase + "." + sourceCollection;
-        String targetNs = targetDatabase + "." + targetCollection;
+        String sinkNs = sinkDatabase + "." + sinkCollection;
         MongoCollection<Document> source =
                 sourceClient.getDatabase(sourceDatabase).getCollection(sourceCollection);
-        MongoCollection<Document> target =
-                targetClient.getDatabase(targetDatabase).getCollection(targetCollection);
+        MongoCollection<Document> sink =
+                sinkClient.getDatabase(sinkDatabase).getCollection(sinkCollection);
 
         long sourceCount = source.countDocuments();
-        long targetCount = target.countDocuments();
+        long sinkCount = sink.countDocuments();
         List<String> samples = new ArrayList<String>();
 
         if (mode == VerifyMode.COUNT) {
-            if (sourceCount != targetCount) {
-                samples.add("count differs source=" + sourceCount + " target=" + targetCount);
+            if (sourceCount != sinkCount) {
+                samples.add("count differs source=" + sourceCount + " sink=" + sinkCount);
             }
             return new CollectionVerifyReport(
-                    sourceNs, targetNs, sourceCount, targetCount, 0, 0, 0, 0, samples);
+                    sourceNs, sinkNs, sourceCount, sinkCount, 0, 0, 0, 0, samples);
         }
 
-        long missingOnTarget = 0;
+        long missingOnSink = 0;
         long missingOnSource = 0;
         long contentMismatch = 0;
         long compared = 0;
 
         Bson idProj = Projections.include("_id");
         try (MongoCursor<Document> sc = source.find().projection(idProj).sort(Sorts.ascending("_id")).batchSize(batchSize).iterator();
-             MongoCursor<Document> tc = target.find().projection(idProj).sort(Sorts.ascending("_id")).batchSize(batchSize).iterator()) {
+             MongoCursor<Document> tc = sink.find().projection(idProj).sort(Sorts.ascending("_id")).batchSize(batchSize).iterator()) {
 
             Document s = sc.hasNext() ? sc.next() : null;
             Document t = tc.hasNext() ? tc.next() : null;
@@ -83,31 +83,31 @@ public final class DataVerifier {
             while (s != null || t != null) {
                 if (s == null) {
                     missingOnSource++;
-                    addSample(samples, "extraOnTarget _id=" + t.get("_id"));
+                    addSample(samples, "extraOnSink _id=" + t.get("_id"));
                     t = tc.hasNext() ? tc.next() : null;
                     continue;
                 }
                 if (t == null) {
-                    missingOnTarget++;
-                    addSample(samples, "missingOnTarget _id=" + s.get("_id"));
+                    missingOnSink++;
+                    addSample(samples, "missingOnSink _id=" + s.get("_id"));
                     s = sc.hasNext() ? sc.next() : null;
                     continue;
                 }
                 int cmp = compareId(s.get("_id"), t.get("_id"));
                 if (cmp < 0) {
-                    missingOnTarget++;
-                    addSample(samples, "missingOnTarget _id=" + s.get("_id"));
+                    missingOnSink++;
+                    addSample(samples, "missingOnSink _id=" + s.get("_id"));
                     s = sc.hasNext() ? sc.next() : null;
                 } else if (cmp > 0) {
                     missingOnSource++;
-                    addSample(samples, "extraOnTarget _id=" + t.get("_id"));
+                    addSample(samples, "extraOnSink _id=" + t.get("_id"));
                     t = tc.hasNext() ? tc.next() : null;
                 } else {
                     // same _id
                     if (mode == VerifyMode.FULL) {
                         compared++;
                         Document fullS = source.find(Filters.eq("_id", s.get("_id"))).first();
-                        Document fullT = target.find(Filters.eq("_id", t.get("_id"))).first();
+                        Document fullT = sink.find(Filters.eq("_id", t.get("_id"))).first();
                         if (!documentsEqual(fullS, fullT)) {
                             contentMismatch++;
                             addSample(samples, "mismatch _id=" + s.get("_id"));
@@ -122,8 +122,8 @@ public final class DataVerifier {
         }
 
         return new CollectionVerifyReport(
-                sourceNs, targetNs, sourceCount, targetCount,
-                missingOnTarget, missingOnSource, contentMismatch, compared, samples);
+                sourceNs, sinkNs, sourceCount, sinkCount,
+                missingOnSink, missingOnSource, contentMismatch, compared, samples);
     }
 
     private void addSample(List<String> samples, String msg) {
@@ -149,15 +149,15 @@ public final class DataVerifier {
         return String.valueOf(a).compareTo(String.valueOf(b));
     }
 
-    private boolean documentsEqual(Document source, Document target) {
-        if (source == null && target == null) {
+    private boolean documentsEqual(Document source, Document sink) {
+        if (source == null && sink == null) {
             return true;
         }
-        if (source == null || target == null) {
+        if (source == null || sink == null) {
             return false;
         }
         Document s = strip(source);
-        Document t = strip(target);
+        Document t = strip(sink);
         return deepEquals(s, t);
     }
 

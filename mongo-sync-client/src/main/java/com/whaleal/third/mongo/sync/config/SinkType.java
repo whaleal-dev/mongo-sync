@@ -1,9 +1,9 @@
 package com.whaleal.third.mongo.sync.config;
 
 /**
- * 同步目标形态。
+ * 同步 Sink 形态。
  */
-public enum TargetType {
+public enum SinkType {
 
     /** 写入 MongoDB / 协议兼容库（默认）。 */
     MONGODB,
@@ -22,10 +22,10 @@ public enum TargetType {
         return this == MONGODB;
     }
 
-    public static TargetType parse(String value) {
+    public static SinkType parse(String value) {
         if (value == null || value.trim().isEmpty()) {
             return MONGODB;
         }
-        return TargetType.valueOf(value.trim().toUpperCase());
+        return SinkType.valueOf(value.trim().toUpperCase());
     }
 }

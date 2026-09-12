@@ -1,7 +1,7 @@
 # 配置示例
 
 - 同步：[mongo-sync.example.properties](./mongo-sync.example.properties) → `SyncMain` / `MongoSyncClient`
-- Kafka 目标：[mongo-sync-kafka.example.properties](./mongo-sync-kafka.example.properties)
+- Kafka Sink：[mongo-sync-kafka.example.properties](./mongo-sync-kafka.example.properties)
 - 比对：[mongo-verify.example.properties](./mongo-verify.example.properties) → `VerifyMain`
 
 ## 脚本入口（推荐）
@@ -46,11 +46,11 @@ try (InputStream in = Files.newInputStream(Paths.get("mongo-sync.example.propert
 
 MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
         .sourceUri(p.getProperty("source.uri"))
-        .targetUri(p.getProperty("target.uri"))
+        .sinkUri(p.getProperty("sink.uri"))
         .sourceDatabase(p.getProperty("source.database"))
         .sourceCollection(p.getProperty("source.collection"))
-        .targetDatabase(p.getProperty("target.database"))
-        .targetCollection(p.getProperty("target.collection"))
+        .sinkDatabase(p.getProperty("sink.database"))
+        .sinkCollection(p.getProperty("sink.collection"))
         .captureMode(CaptureMode.valueOf(p.getProperty("capture.mode", "CHANGE_STREAM")))
         .syncMode(SyncMode.valueOf(p.getProperty("sync.mode", "INCREMENTAL")))
         .bootstrapCollection(Boolean.parseBoolean(p.getProperty("bootstrap.collection", "true")))

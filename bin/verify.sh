@@ -6,7 +6,7 @@
 #   ./bin/verify.sh
 #   ./bin/verify.sh -f doc/examples/mongo-verify.example.properties
 #   ./bin/verify.sh --config ./my.properties
-#   ./bin/verify.sh --source-uri ... --target-uri ... --source-db demo --source-coll orders
+#   ./bin/verify.sh --source-uri ... --sink-uri ... --source-db demo --source-coll orders
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

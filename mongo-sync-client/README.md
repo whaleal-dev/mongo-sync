@@ -11,7 +11,7 @@ Source (Oplog / ChangeStream)
 Sink 落地
 ```
 
-Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。目标可以是 MongoDB，也可以是 Kafka（`targetType=KAFKA`）。
+Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。Sink 可以是 MongoDB，也可以是 Kafka（`sinkType=KAFKA`）。
 
 关系库（MySQL / Oracle / PostgreSQL）的对位编排在 [rds-sync](https://github.com/whaleal-dev/rds-sync)，不要把本模块当 JDBC 同步器用。
 
@@ -31,10 +31,10 @@ Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。目标可
 
 | 层级 | 用词 | 含义 |
 |------|------|------|
-| Sync 配置 | `source*` / `target*` | 源端 / 目标端连接与库表、批量参数 |
+| Sync 配置 | `source*` / `sink*` | 源端 / Sink 端连接与库表、批量参数 |
 | 模块 / 组件 | `mongo-sink-client` / `MongoSinkClient` | 写入落地 SDK（实现角色） |
 
-例如：`.targetUri()` / `.targetBatchSize()`；内部持有 `MongoSinkClient` 实例。
+例如：`.sinkUri()` / `.sinkBatchSize()`；内部持有 `MongoSinkClient` 实例。
 
 ## 同步模式（`SyncMode`）
 
@@ -70,7 +70,7 @@ beforeInitialSync：记录 start（oplog ts / clusterTime），清旧 ResumeToke
 - 并行期间**禁止回拨位点**（避免覆盖增量已推进的 offset/token）  
 - `FULL_AND_CATCH_UP`：上界在全量结束后写入；增量动态感知上界并追平后停  
 - 增量识别到本表 `DROP_COLLECTION` / `RENAME_COLLECTION` / 本库 `DROP_DATABASE`：源端全量扫描**视为完成**并退出，仍走 `onInitialSyncCompleted` / barrier  
-- 过程中元信息：`CREATE/DROP_INDEXES` 后重探唯一索引并调整分桶/ordered；`RENAME` 后目标写集合跟随改名（源监视名不自动跟随，ChangeStream 通常随后 invalidate）  
+- 过程中元信息：`CREATE/DROP_INDEXES` 后重探唯一索引并调整分桶/ordered；`RENAME` 后 Sink 写集合跟随改名（源监视名不自动跟随，ChangeStream 通常随后 invalidate）  
 
 ## 并发注意
 
@@ -84,11 +84,11 @@ beforeInitialSync：记录 start（oplog ts / clusterTime），清旧 ResumeToke
 
 | 配置 | 默认 | 含义 |
 |------|------|------|
-| `.bootstrapCollection(true)` | true | 创建目标集合/视图 |
+| `.bootstrapCollection(true)` | true | 创建 Sink 集合/视图 |
 | `.bootstrapIndexes(true)` | true | 创建源端非 `_id_` 索引 |
 | `.skipTtlIndexes(true)` | true | 预建索引时跳过 TTL（仅 `bootstrapIndexes=true` 时生效） |
 
-目标集合已存在则跳过建表；`bootstrapIndexes=true` 时仍会补齐缺失索引。
+Sink 集合已存在则跳过建表；`bootstrapIndexes=true` 时仍会补齐缺失索引。
 
 ## 数据比对（校验）
 
@@ -103,14 +103,14 @@ mvn -pl mongo-sync-client exec:java \
 # 或命令行单表
 mvn -pl mongo-sync-client exec:java -Dexec.args="\
   --source-uri mongodb://127.0.0.1:27017/?replicaSet=rs0 \
-  --target-uri mongodb://127.0.0.1:27018 \
+  --sink-uri mongodb://127.0.0.1:27018 \
   --source-db demo --source-coll orders --mode FULL"
 ```
 
 | `verify.mode` | 含义 |
 |---------------|------|
 | `COUNT` | 仅文档数 |
-| `ID` | 比对 `_id` 有无（缺源/缺目标） |
+| `ID` | 比对 `_id` 有无（缺源/缺 Sink） |
 | `FULL` | `_id` + 文档内容（可用 `verify.ignore.fields` 忽略字段） |
 
 退出码：`0` 通过，`1` 有差异，`2` 运行错误。示例配置见 [mongo-verify.example.properties](../doc/examples/mongo-verify.example.properties)。
@@ -120,7 +120,7 @@ mvn -pl mongo-sync-client exec:java -Dexec.args="\
 ```java
 MongoMultiSyncClient multi = MongoMultiSyncClient.create(MongoMultiSyncConfig.builder()
         .sourceUri("mongodb://src/?replicaSet=rs0")
-        .targetUri("mongodb://target")
+        .sinkUri("mongodb://sink")
         .namespaceWhite("demo;app.orders")   // 整库 demo + 单表 app.orders
         // .namespaceTransform("demo.orders:backup.orders")
         .syncMode(SyncMode.FULL_AND_INCREMENTAL)
@@ -154,7 +154,7 @@ multi.start();
 // 推荐：不手配 capture，连 mongos 即可（分片增量走 ChangeStream）
 MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
         .sourceUri("mongodb://mongos:27017")
-        .targetUri("mongodb://target:27017")
+        .sinkUri("mongodb://sink:27017")
         .mapCollection("demo", "orders")
         .syncMode(SyncMode.FULL_AND_INCREMENTAL)
         .captureMode(CaptureMode.AUTO)   // 默认即可省略
@@ -171,9 +171,9 @@ System.err.println(sync.getSourceTopology() + " → " + sync.getResolvedCaptureM
 ```java
 MongoSyncClient sync = MongoSyncClient.create(MongoSyncClient.builder()
         .sourceUri("mongodb://127.0.0.1:27017/?replicaSet=rs0")
-        .targetUri("mongodb://127.0.0.1:27018")
+        .sinkUri("mongodb://127.0.0.1:27018")
         .sourceDatabase("demo").sourceCollection("orders")
-        .targetDatabase("demo").targetCollection("orders")
+        .sinkDatabase("demo").sinkCollection("orders")
         // captureMode 默认 AUTO → 副本集走 ChangeStream
         .syncMode(SyncMode.FULL_AND_INCREMENTAL)
         .bootstrapCollection(true)  // 默认：先建表
@@ -189,13 +189,13 @@ sync.start();
 sync.close();
 ```
 
-Kafka 目标：
+Kafka Sink：
 
 ```java
 MongoSyncClient.create(MongoSyncClient.builder()
         .sourceUri("mongodb://127.0.0.1:27017/?replicaSet=rs0")
-        .targetUri("127.0.0.1:9092")
-        .targetType(TargetType.KAFKA)
+        .sinkUri("127.0.0.1:9092")
+        .sinkType(SinkType.KAFKA)
         .mapCollection("demo", "orders")
         .kafkaTopicPrefix("mongo")
         .syncMode(SyncMode.FULL_AND_INCREMENTAL)

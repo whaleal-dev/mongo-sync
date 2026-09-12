@@ -26,7 +26,7 @@ import java.util.Properties;
  *
  *   # 或简参（单表 FULL）
  *   java ... VerifyMain \
- *     --source-uri mongodb://src --target-uri mongodb://tgt \
+ *     --source-uri mongodb://src --sink-uri mongodb://tgt \
  *     --source-db demo --source-coll orders
  * </pre>
  * <p>
@@ -52,16 +52,16 @@ public final class VerifyMain {
     static int run(String[] args) throws Exception {
         Properties props = loadArgs(args);
         String sourceUri = req(props, "source.uri");
-        String targetUri = req(props, "target.uri");
+        String sinkUri = req(props, "sink.uri");
         VerifyMode mode = VerifyMode.valueOf(get(props, "verify.mode", "FULL").toUpperCase());
         int maxSamples = integer(props, "verify.max.samples", 50);
         int batchSize = integer(props, "verify.batch.size", 500);
         java.util.Set<String> ignore = DataVerifier.parseIgnoreFields(get(props, "verify.ignore.fields", ""));
 
         MongoClient source = MongoClients.create(sourceUri);
-        MongoClient target = MongoClients.create(targetUri);
+        MongoClient sink = MongoClients.create(sinkUri);
         try {
-            DataVerifier verifier = new DataVerifier(source, target, mode, ignore, maxSamples, batchSize);
+            DataVerifier verifier = new DataVerifier(source, sink, mode, ignore, maxSamples, batchSize);
             List<NamespaceMapper.NsPair> pairs = resolvePairs(props, source);
             if (pairs.isEmpty()) {
                 throw new IllegalStateException("no collections to verify");
@@ -73,7 +73,7 @@ public final class VerifyMain {
             for (NamespaceMapper.NsPair pair : pairs) {
                 CollectionVerifyReport report = verifier.verify(
                         pair.sourceDatabase, pair.sourceCollection,
-                        pair.targetDatabase, pair.targetCollection);
+                        pair.sinkDatabase, pair.sinkCollection);
                 reports.add(report);
                 System.out.println(report);
                 for (String sample : report.getSamples()) {
@@ -95,7 +95,7 @@ public final class VerifyMain {
             return allPass ? 0 : 1;
         } finally {
             source.close();
-            target.close();
+            sink.close();
         }
     }
 
@@ -111,8 +111,8 @@ public final class VerifyMain {
 
         String sdb = req(props, "source.database");
         String scoll = req(props, "source.collection");
-        String tdb = get(props, "target.database", sdb);
-        String tcoll = get(props, "target.collection", scoll);
+        String tdb = get(props, "sink.database", sdb);
+        String tcoll = get(props, "sink.collection", scoll);
         if (transform != null && !transform.trim().isEmpty()) {
             NamespaceMapper.NsPair mapped = NamespaceMapper.of(transform).map(sdb, scoll);
             List<NamespaceMapper.NsPair> one = new ArrayList<NamespaceMapper.NsPair>();
@@ -141,16 +141,16 @@ public final class VerifyMain {
             String a = args[i];
             if ("--source-uri".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.uri", args[++i]);
-            } else if ("--target-uri".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.uri", args[++i]);
+            } else if ("--sink-uri".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.uri", args[++i]);
             } else if ("--source-db".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.database", args[++i]);
             } else if ("--source-coll".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.collection", args[++i]);
-            } else if ("--target-db".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.database", args[++i]);
-            } else if ("--target-coll".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.collection", args[++i]);
+            } else if ("--sink-db".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.database", args[++i]);
+            } else if ("--sink-coll".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.collection", args[++i]);
             } else if ("--mode".equals(a) && i + 1 < args.length) {
                 props.setProperty("verify.mode", args[++i]);
             } else if ("--namespace-white".equals(a) && i + 1 < args.length) {

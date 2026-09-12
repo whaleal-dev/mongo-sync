@@ -13,7 +13,7 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.cache.SyncCaches;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
-import com.whaleal.third.mongo.sync.config.TargetType;
+import com.whaleal.third.mongo.sync.config.SinkType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.meta.CollectionStructureBootstrap;
@@ -22,7 +22,7 @@ import com.whaleal.third.mongo.sync.offset.MemoryOplogOffsetStorage;
 import com.whaleal.third.mongo.sync.offset.MemoryResumeTokenStorage;
 import com.whaleal.third.mongo.sync.pipeline.BucketWritePipeline;
 import com.whaleal.third.mongo.sync.pipeline.IdBucketRouter;
-import com.whaleal.third.mongo.sync.sink.TargetSinkFactory;
+import com.whaleal.third.mongo.sync.sink.SinkFactory;
 import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
 import com.whaleal.third.mongo.transfer.spi.DdlEventListener;
@@ -53,9 +53,9 @@ public final class MongoSyncClient implements AutoCloseable {
 
     private final MongoSyncConfig config;
     private final MongoClient sourceClient;
-    private final MongoClient targetClient;
+    private final MongoClient sinkClient;
     private final boolean ownsSourceClient;
-    private final boolean ownsTargetClient;
+    private final boolean ownsSinkClient;
     private final SyncCaches caches;
     private final BucketWritePipeline pipeline;
     private final TransferSink sink;
@@ -89,15 +89,15 @@ public final class MongoSyncClient implements AutoCloseable {
             this.sourceClient = MongoClients.create(config.getSourceUri());
             this.ownsSourceClient = true;
         }
-        if (config.getTargetType() == TargetType.KAFKA) {
-            this.targetClient = null;
-            this.ownsTargetClient = false;
-        } else if (config.getTargetMongoClient() != null) {
-            this.targetClient = config.getTargetMongoClient();
-            this.ownsTargetClient = config.isCloseTargetClientOnClose();
+        if (config.getSinkType() == SinkType.KAFKA) {
+            this.sinkClient = null;
+            this.ownsSinkClient = false;
+        } else if (config.getSinkMongoClient() != null) {
+            this.sinkClient = config.getSinkMongoClient();
+            this.ownsSinkClient = config.isCloseSinkClientOnClose();
         } else {
-            this.targetClient = MongoClients.create(config.getTargetUri());
-            this.ownsTargetClient = true;
+            this.sinkClient = MongoClients.create(config.getSinkUri());
+            this.ownsSinkClient = true;
         }
 
         this.caches = new SyncCaches(config.getNsLockExpireMinutes());
@@ -111,14 +111,14 @@ public final class MongoSyncClient implements AutoCloseable {
 
         boolean orderedWrite = caches.hasUniqueIndex(config.sourceNs());
 
-        this.sink = TargetSinkFactory.create(config, targetClient, orderedWrite);
-        System.err.println("[mongo-sync] target-type=" + config.getTargetType()
-                + (config.getTargetType() == TargetType.KAFKA
-                ? (" bootstrap=" + config.getTargetUri()
+        this.sink = SinkFactory.create(config, sinkClient, orderedWrite);
+        System.err.println("[mongo-sync] sink-type=" + config.getSinkType()
+                + (config.getSinkType() == SinkType.KAFKA
+                ? (" bootstrap=" + config.getSinkUri()
                 + " topicPrefix=" + config.getKafkaTopicPrefix()
-                + " ns=" + config.getTargetDatabase() + "." + config.getTargetCollection())
-                : (" uri=" + (config.getTargetUri() == null ? "(injected client)" : config.getTargetUri())
-                + " ns=" + config.getTargetDatabase() + "." + config.getTargetCollection())));
+                + " ns=" + config.getSinkDatabase() + "." + config.getSinkCollection())
+                : (" uri=" + (config.getSinkUri() == null ? "(injected client)" : config.getSinkUri())
+                + " ns=" + config.getSinkDatabase() + "." + config.getSinkCollection())));
 
         IdBucketRouter router = new IdBucketRouter(
                 config.getBucketNum(),
@@ -312,21 +312,21 @@ public final class MongoSyncClient implements AutoCloseable {
             startedAtMs.compareAndSet(0, System.currentTimeMillis());
             migrationState.set(MigrationState.RUNNING);
             stateDetail.set("starting");
-            if (config.getTargetType() != TargetType.KAFKA
+            if (config.getSinkType() != SinkType.KAFKA
                     && (config.isBootstrapCollection() || config.isBootstrapIndexes())) {
-                CollectionStructureBootstrap.ensureTarget(
+                CollectionStructureBootstrap.ensureSink(
                         sourceClient,
-                        targetClient,
+                        sinkClient,
                         config.getSourceDatabase(),
                         config.getSourceCollection(),
-                        config.getTargetDatabase(),
-                        config.getTargetCollection(),
+                        config.getSinkDatabase(),
+                        config.getSinkCollection(),
                         config.isBootstrapCollection(),
                         config.isBootstrapIndexes(),
                         config.isSkipTtlIndexes());
-            } else if (config.getTargetType() == TargetType.KAFKA
+            } else if (config.getSinkType() == SinkType.KAFKA
                     && (config.isBootstrapCollection() || config.isBootstrapIndexes())) {
-                System.err.println("[mongo-sync] skip bootstrapCollection/indexes: targetType=KAFKA");
+                System.err.println("[mongo-sync] skip bootstrapCollection/indexes: sinkType=KAFKA");
             }
             if (source != null) {
                 source.start();
@@ -685,9 +685,9 @@ public final class MongoSyncClient implements AutoCloseable {
             } catch (Exception ignored) {
             }
         }
-        if (ownsTargetClient && targetClient != null) {
+        if (ownsSinkClient && sinkClient != null) {
             try {
-                targetClient.close();
+                sinkClient.close();
             } catch (Exception ignored) {
             }
         }

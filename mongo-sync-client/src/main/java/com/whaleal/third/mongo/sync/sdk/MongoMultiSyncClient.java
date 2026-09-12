@@ -7,7 +7,7 @@ import com.whaleal.third.mongo.source.topology.SourceTopologyDetector;
 import com.whaleal.third.mongo.source.topology.SourceTopologyInfo;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
-import com.whaleal.third.mongo.sync.config.TargetType;
+import com.whaleal.third.mongo.sync.config.SinkType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.ns.CollectionDiscovery;
@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 多库表同步编排：按白/黑名单发现集合，为每张表启动一个 {@link MongoSyncClient}（共享源/目标 MongoClient）。
+ * 多库表同步编排：按白/黑名单发现集合，为每张表启动一个 {@link MongoSyncClient}（共享源/Sink MongoClient）。
  * <p>
  * 对齐 MongoShake 库表过滤能力；位点可选文件持久化（{@link MongoMultiSyncConfig.Builder#offsetStoreDir}）。
  */
@@ -28,9 +28,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
 
     private final MongoMultiSyncConfig config;
     private final MongoClient sourceClient;
-    private final MongoClient targetClient;
+    private final MongoClient sinkClient;
     private final boolean ownsSourceClient;
-    private final boolean ownsTargetClient;
+    private final boolean ownsSinkClient;
     private final List<MongoSyncClient> children;
     private final List<NamespaceMapper.NsPair> namespaces;
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -39,15 +39,15 @@ public final class MongoMultiSyncClient implements AutoCloseable {
     private MongoMultiSyncClient(MongoMultiSyncConfig config,
                                  MongoClient sourceClient,
                                  boolean ownsSourceClient,
-                                 MongoClient targetClient,
-                                 boolean ownsTargetClient,
+                                 MongoClient sinkClient,
+                                 boolean ownsSinkClient,
                                  List<NamespaceMapper.NsPair> namespaces,
                                  List<MongoSyncClient> children) {
         this.config = config;
         this.sourceClient = sourceClient;
         this.ownsSourceClient = ownsSourceClient;
-        this.targetClient = targetClient;
-        this.ownsTargetClient = ownsTargetClient;
+        this.sinkClient = sinkClient;
+        this.ownsSinkClient = ownsSinkClient;
         this.namespaces = Collections.unmodifiableList(namespaces);
         this.children = Collections.unmodifiableList(children);
     }
@@ -58,23 +58,23 @@ public final class MongoMultiSyncClient implements AutoCloseable {
 
     public static MongoMultiSyncClient create(MongoMultiSyncConfig config) {
         boolean ownsSource = false;
-        boolean ownsTarget = false;
+        boolean ownsSink = false;
         MongoClient source;
-        MongoClient target;
+        MongoClient sink;
         if (config.getSourceMongoClient() != null) {
             source = config.getSourceMongoClient();
         } else {
             source = MongoClients.create(config.getSourceUri());
             ownsSource = true;
         }
-        if (config.getTargetType() == TargetType.KAFKA) {
-            target = null;
-            ownsTarget = false;
-        } else if (config.getTargetMongoClient() != null) {
-            target = config.getTargetMongoClient();
+        if (config.getSinkType() == SinkType.KAFKA) {
+            sink = null;
+            ownsSink = false;
+        } else if (config.getSinkMongoClient() != null) {
+            sink = config.getSinkMongoClient();
         } else {
-            target = MongoClients.create(config.getTargetUri());
-            ownsTarget = true;
+            sink = MongoClients.create(config.getSinkUri());
+            ownsSink = true;
         }
 
         NamespaceFilter filter = config.namespaceFilter();
@@ -91,8 +91,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             if (ownsSource) {
                 source.close();
             }
-            if (ownsTarget && target != null) {
-                target.close();
+            if (ownsSink && sink != null) {
+                sink.close();
             }
             throw new IllegalStateException(
                     "no collections matched namespace filter white="
@@ -115,9 +115,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .closeSourceClientOnStop(false)
                         .sourceDatabase(pair.sourceDatabase)
                         .sourceCollection(pair.sourceCollection)
-                        .targetDatabase(pair.targetDatabase)
-                        .targetCollection(pair.targetCollection)
-                        .targetType(config.getTargetType())
+                        .sinkDatabase(pair.sinkDatabase)
+                        .sinkCollection(pair.sinkCollection)
+                        .sinkType(config.getSinkType())
                         .captureMode(resolvedCapture)
                         .syncMode(config.getSyncMode())
                         .fullDocument(config.getFullDocument())
@@ -125,8 +125,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .includeFromMigrate(config.isIncludeFromMigrate())
                         .writeMode(config.getWriteMode())
                         .onConflict(config.getOnConflict())
-                        .targetBatchSize(config.getTargetBatchSize())
-                        .targetWriterThreads(config.getTargetWriterThreads())
+                        .sinkBatchSize(config.getSinkBatchSize())
+                        .sinkWriterThreads(config.getSinkWriterThreads())
                         .bucketNum(config.getBucketNum())
                         .bucketQueueCapacity(config.getBucketQueueCapacity())
                         .ddlWaitSeconds(config.getDdlWaitSeconds())
@@ -154,11 +154,11 @@ public final class MongoMultiSyncClient implements AutoCloseable {
                         .kafkaClientId(config.getKafkaClientId())
                         .kafkaProducerProperties(config.getKafkaProducerProperties());
 
-                if (config.getTargetType() == TargetType.KAFKA) {
-                    b.targetUri(config.getTargetUri());
+                if (config.getSinkType() == SinkType.KAFKA) {
+                    b.sinkUri(config.getSinkUri());
                 } else {
-                    b.targetMongoClient(target)
-                            .closeTargetClientOnClose(false);
+                    b.sinkMongoClient(sink)
+                            .closeSinkClientOnClose(false);
                 }
 
                 if (config.getMongoVersion() != null) {
@@ -181,8 +181,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             if (ownsSource) {
                 source.close();
             }
-            if (ownsTarget && target != null) {
-                target.close();
+            if (ownsSink && sink != null) {
+                sink.close();
             }
             throw e;
         }
@@ -190,7 +190,7 @@ public final class MongoMultiSyncClient implements AutoCloseable {
         System.err.println("[mongo-sync] multi-sync discovered " + pairs.size()
                 + " collection(s): " + summarize(pairs));
         return new MongoMultiSyncClient(
-                config, source, ownsSource, target, ownsTarget, pairs, children);
+                config, source, ownsSource, sink, ownsSink, pairs, children);
     }
 
     public void start() {
@@ -383,9 +383,9 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             } catch (Exception ignored) {
             }
         }
-        if (ownsTargetClient && targetClient != null) {
+        if (ownsSinkClient && sinkClient != null) {
             try {
-                targetClient.close();
+                sinkClient.close();
             } catch (Exception ignored) {
             }
         }
@@ -460,8 +460,8 @@ public final class MongoMultiSyncClient implements AutoCloseable {
             }
             NamespaceMapper.NsPair p = pairs.get(i);
             sb.append(p.sourceNs());
-            if (!p.sourceNs().equals(p.targetNs())) {
-                sb.append("->").append(p.targetNs());
+            if (!p.sourceNs().equals(p.sinkNs())) {
+                sb.append("->").append(p.sinkNs());
             }
         }
         if (pairs.size() > n) {

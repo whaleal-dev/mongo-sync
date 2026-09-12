@@ -9,7 +9,7 @@ import com.whaleal.third.mongo.source.config.MongoSourceConfig;
 import com.whaleal.third.mongo.source.config.SyncMode;
 import com.whaleal.third.mongo.sync.config.MongoMultiSyncConfig;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
-import com.whaleal.third.mongo.sync.config.TargetType;
+import com.whaleal.third.mongo.sync.config.SinkType;
 import com.whaleal.third.mongo.sync.error.MongoSyncErrorCode;
 import com.whaleal.third.mongo.sync.error.MongoSyncException;
 import com.whaleal.third.mongo.sync.sdk.MigrationProgress;
@@ -67,7 +67,7 @@ public final class SyncMain {
         Properties props = loadArgs(args);
         validateStartupProps(props);
         String sourceUri = req(props, "source.uri");
-        String targetUri = req(props, "target.uri");
+        String sinkUri = req(props, "sink.uri");
 
         boolean multi = hasText(props.getProperty("namespace.white"))
                 || hasText(props.getProperty("namespace.black"));
@@ -112,7 +112,7 @@ public final class SyncMain {
         }, "mongo-sync-shutdown"));
 
         if (multi) {
-            MongoMultiSyncClient multiClient = MongoMultiSyncClient.create(buildMulti(props, sourceUri, targetUri));
+            MongoMultiSyncClient multiClient = MongoMultiSyncClient.create(buildMulti(props, sourceUri, sinkUri));
             clientRef.set(multiClient);
             System.err.println("[mongo-sync] starting MULTI-SYNC white="
                     + props.getProperty("namespace.white")
@@ -137,12 +137,12 @@ public final class SyncMain {
             }
             scheduleProgress(progressExecutor, progressLogSeconds, stop, autoCommitWhenReady, multiClient);
         } else {
-            MongoSyncClient sync = MongoSyncClient.create(buildSingle(props, sourceUri, targetUri));
+            MongoSyncClient sync = MongoSyncClient.create(buildSingle(props, sourceUri, sinkUri));
             clientRef.set(sync);
             System.err.println("[mongo-sync] starting SYNC ns="
                     + req(props, "source.database") + "." + req(props, "source.collection")
-                    + " → " + get(props, "target.database", props.getProperty("source.database"))
-                    + "." + get(props, "target.collection", props.getProperty("source.collection"))
+                    + " → " + get(props, "sink.database", props.getProperty("source.database"))
+                    + "." + get(props, "sink.collection", props.getProperty("source.collection"))
                     + " syncMode=" + get(props, "sync.mode", "FULL_AND_INCREMENTAL")
                     + " capture=" + get(props, "capture.mode", "AUTO")
                     + " topology=" + sync.getSourceTopology()
@@ -291,19 +291,19 @@ public final class SyncMain {
         return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    private static MongoSyncConfig.Builder buildSingle(Properties props, String sourceUri, String targetUri) {
+    private static MongoSyncConfig.Builder buildSingle(Properties props, String sourceUri, String sinkUri) {
         String sdb = req(props, "source.database");
         String scoll = req(props, "source.collection");
-        String tdb = get(props, "target.database", sdb);
-        String tcoll = get(props, "target.collection", scoll);
+        String tdb = get(props, "sink.database", sdb);
+        String tcoll = get(props, "sink.collection", scoll);
 
         MongoSyncConfig.Builder b = MongoSyncClient.builder()
                 .sourceUri(sourceUri)
-                .targetUri(targetUri)
+                .sinkUri(sinkUri)
                 .sourceDatabase(sdb)
                 .sourceCollection(scoll)
-                .targetDatabase(tdb)
-                .targetCollection(tcoll)
+                .sinkDatabase(tdb)
+                .sinkCollection(tcoll)
                 .captureMode(parseCaptureMode(props))
                 .syncMode(parseSyncMode(props))
                 .fullDocument(parseFullDocument(props))
@@ -311,8 +311,8 @@ public final class SyncMain {
                 .includeFromMigrate(bool(props, "include.from.migrate", false))
                 .writeMode(parseWriteMode(props))
                 .onConflict(parseOnConflict(props))
-                .targetBatchSize(integer(props, "target.batch.size", 1000))
-                .targetWriterThreads(integer(props, "target.writer.threads", 8))
+                .sinkBatchSize(integer(props, "sink.batch.size", 1000))
+                .sinkWriterThreads(integer(props, "sink.writer.threads", 8))
                 .bucketNum(integer(props, "bucket.num", 16))
                 .bucketQueueCapacity(integer(props, "bucket.queue.capacity", 8192))
                 .ddlWaitSeconds(integer(props, "ddl.wait.seconds", 30))
@@ -349,10 +349,10 @@ public final class SyncMain {
         return b;
     }
 
-    private static MongoMultiSyncConfig.Builder buildMulti(Properties props, String sourceUri, String targetUri) {
+    private static MongoMultiSyncConfig.Builder buildMulti(Properties props, String sourceUri, String sinkUri) {
         MongoMultiSyncConfig.Builder b = MongoMultiSyncConfig.builder()
                 .sourceUri(sourceUri)
-                .targetUri(targetUri)
+                .sinkUri(sinkUri)
                 .namespaceWhite(props.getProperty("namespace.white"))
                 .namespaceBlack(props.getProperty("namespace.black"))
                 .namespaceTransform(props.getProperty("namespace.transform"))
@@ -363,8 +363,8 @@ public final class SyncMain {
                 .includeFromMigrate(bool(props, "include.from.migrate", false))
                 .writeMode(parseWriteMode(props))
                 .onConflict(parseOnConflict(props))
-                .targetBatchSize(integer(props, "target.batch.size", 1000))
-                .targetWriterThreads(integer(props, "target.writer.threads", 8))
+                .sinkBatchSize(integer(props, "sink.batch.size", 1000))
+                .sinkWriterThreads(integer(props, "sink.writer.threads", 8))
                 .bucketNum(integer(props, "bucket.num", 16))
                 .bucketQueueCapacity(integer(props, "bucket.queue.capacity", 8192))
                 .ddlWaitSeconds(integer(props, "ddl.wait.seconds", 30))
@@ -432,16 +432,16 @@ public final class SyncMain {
                 loadFile(props, Paths.get(args[++i]));
             } else if ("--source-uri".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.uri", args[++i]);
-            } else if ("--target-uri".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.uri", args[++i]);
+            } else if ("--sink-uri".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.uri", args[++i]);
             } else if ("--source-db".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.database", args[++i]);
             } else if ("--source-coll".equals(a) && i + 1 < args.length) {
                 props.setProperty("source.collection", args[++i]);
-            } else if ("--target-db".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.database", args[++i]);
-            } else if ("--target-coll".equals(a) && i + 1 < args.length) {
-                props.setProperty("target.collection", args[++i]);
+            } else if ("--sink-db".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.database", args[++i]);
+            } else if ("--sink-coll".equals(a) && i + 1 < args.length) {
+                props.setProperty("sink.collection", args[++i]);
             } else if ("--namespace-white".equals(a) && i + 1 < args.length) {
                 props.setProperty("namespace.white", args[++i]);
             } else if ("--sync-mode".equals(a) && i + 1 < args.length) {
@@ -471,7 +471,7 @@ public final class SyncMain {
 
     private static void validateStartupProps(Properties props) {
         req(props, "source.uri");
-        req(props, "target.uri");
+        req(props, "sink.uri");
 
         boolean multi = hasText(props.getProperty("namespace.white"))
                 || hasText(props.getProperty("namespace.black"));
@@ -490,7 +490,7 @@ public final class SyncMain {
         parseFullDocument(props);
         parseWriteMode(props);
         parseOnConflict(props);
-        parseTargetType(props);
+        parseSinkType(props);
         parseKafkaOutputFormat(props);
 
         int progressLogSeconds = integer(props, "progress.log.interval.seconds", 10);
@@ -498,12 +498,12 @@ public final class SyncMain {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
                     "progress.log.interval.seconds must be >= 0");
         }
-        int batchSize = integer(props, "target.batch.size", 1000);
-        int writerThreads = integer(props, "target.writer.threads", 8);
+        int batchSize = integer(props, "sink.batch.size", 1000);
+        int writerThreads = integer(props, "sink.writer.threads", 8);
         int bucketNum = integer(props, "bucket.num", 16);
         if (batchSize <= 0 || writerThreads <= 0 || bucketNum <= 0) {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                    "target.batch.size, target.writer.threads, bucket.num must be > 0");
+                    "sink.batch.size, sink.writer.threads, bucket.num must be > 0");
         }
     }
 
@@ -552,12 +552,12 @@ public final class SyncMain {
         }
     }
 
-    private static TargetType parseTargetType(Properties props) {
+    private static SinkType parseSinkType(Properties props) {
         try {
-            return TargetType.parse(get(props, "target.type", "MONGODB"));
+            return SinkType.parse(get(props, "sink.type", "MONGODB"));
         } catch (IllegalArgumentException e) {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                    "invalid target.type, expected MONGODB|KAFKA", e);
+                    "invalid sink.type, expected MONGODB|KAFKA", e);
         }
     }
 
@@ -571,11 +571,11 @@ public final class SyncMain {
     }
 
     private static boolean defaultBootstrap(Properties props) {
-        return parseTargetType(props) != TargetType.KAFKA;
+        return parseSinkType(props) != SinkType.KAFKA;
     }
 
     private static void applyKafka(MongoSyncConfig.Builder b, Properties props) {
-        b.targetType(parseTargetType(props))
+        b.sinkType(parseSinkType(props))
                 .kafkaTopic(emptyToNull(props.getProperty("kafka.topic")))
                 .kafkaTopicPrefix(get(props, "kafka.topic.prefix", ""))
                 .kafkaTopicSeparator(get(props, "kafka.topic.separator", KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR))
@@ -591,7 +591,7 @@ public final class SyncMain {
     }
 
     private static void applyKafka(MongoMultiSyncConfig.Builder b, Properties props) {
-        b.targetType(parseTargetType(props))
+        b.sinkType(parseSinkType(props))
                 .kafkaTopic(emptyToNull(props.getProperty("kafka.topic")))
                 .kafkaTopicPrefix(get(props, "kafka.topic.prefix", ""))
                 .kafkaTopicSeparator(get(props, "kafka.topic.separator", KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR))

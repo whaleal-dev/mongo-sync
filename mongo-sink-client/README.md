@@ -9,8 +9,8 @@ Sink 只依赖 `mongo-transfer-model`，**只识别** `TransferEvent` / `DdlEven
 ```java
 MongoSinkClient sink = MongoSinkClient.builder()
         .uri("mongodb://127.0.0.1:27017")
-        .database("target_db")
-        .collection("target_coll")
+        .database("sink_db")
+        .collection("sink_coll")
         .writeMode(WriteMode.STRICT)          // insert 用 InsertOne
         .onConflict(OnConflict.SKIP)         // 主键冲突：SKIP | UPSERT | FAIL
         .build();

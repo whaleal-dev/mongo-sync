@@ -116,7 +116,7 @@ public class SinkWriter implements AutoCloseable {
      * 唯一文档事件入口：只识别 {@link TransferEvent}（与捕获协议无关）。
      *
      * @return 本次写入的序号；{@code 0} 表示事件未产生任何写入。
-     *         配合 {@link #landedThrough()} 可判断该写入是否已在目标端生效。
+     *         配合 {@link #landedThrough()} 可判断该写入是否已在Sink 端生效。
      */
     public long apply(TransferEvent event) {
         if (event == null || event.getOp() == null) {
@@ -134,7 +134,7 @@ public class SinkWriter implements AutoCloseable {
     }
 
     /**
-     * 执行 DDL：先 flush+等待在途 CRUD，再同步执行；rename 后切换写目标集合。
+     * 执行 DDL：先 flush+等待在途 CRUD，再同步执行；rename 后切换写 Sink 集合。
      */
     public void applyDdl(DdlEvent event) {
         flushAndWait();
@@ -221,7 +221,7 @@ public class SinkWriter implements AutoCloseable {
     }
 
     /**
-     * 已确认落库的最大写入序号：所有 {@code seq <= landedThrough()} 的写入都已在目标端生效。
+     * 已确认落库的最大写入序号：所有 {@code seq <= landedThrough()} 的写入都已在Sink 端生效。
      * <p>
      * 仍在缓冲中、以及已提交但未完成的批次都不计入。调用方据此判断某个 {@code _id}
      * 的上一次写入是否还可能与后续写入并发乱序。

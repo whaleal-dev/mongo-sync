@@ -23,7 +23,7 @@ CONF=/path/to.properties ./bin/mongosync.sh
 ./bin/verify.sh -f doc/examples/mongo-verify.example.properties
 ./bin/verify.sh \
   --source-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
-  --target-uri 'mongodb://127.0.0.1:27018' \
+  --sink-uri 'mongodb://127.0.0.1:27018' \
   --source-db demo --source-coll orders --mode FULL
 ```
 

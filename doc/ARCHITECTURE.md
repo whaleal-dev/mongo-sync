@@ -48,7 +48,7 @@ MongoSourceClient
 | 命名说明 | 用 `AND` 表示并行，不用易误解为串行的 `THEN` |
 | 删表/改名提前结束全量 | 增量识别 `DROP` / `RENAME` / `DROP_DATABASE` → 源端全量视为完成 |
 | 索引 DDL 刷新分桶 | `CREATE/DROP_INDEXES` 后重探唯一索引并调整 Sink ordered |
-| rename 目标跟随 | Sink 执行 rename 后切换写集合句柄 |
+| rename 后 Sink 跟随 | Sink 执行 rename 后切换写集合句柄 |
 | `INCREMENTAL` | 仅增量 |
 
 衔接要点：增量从全量**开始前**的 oplog ts / `startAtOperationTime` 消费；与快照重复靠 UPSERT；全量结束后 `tryDrainAndFlush`（并行下不强求 inflight=0）。
@@ -75,7 +75,7 @@ MongoSourceClient
 | 捕获窗口告警（`window.warn.seconds`） | ✅ |
 | 独立增量 pause（`pauseIncremental`） | ✅ |
 | 数据比对校验（`VerifyMain`：COUNT/ID/FULL） | ✅ |
-| Kafka 目标（mongo-kafka Change Stream JSON/BSON） | ✅ |
+| Kafka Sink（mongo-kafka Change Stream JSON/BSON） | ✅ |
 | 位点文件持久化（`offsetStoreDir`，按 ns） | ✅ |
 | 位点周期心跳日志 | ✅ |
 | 大表全量并行读（`fullSyncParallelism`，对齐 d2t `_id` 切段） | ✅ |
@@ -106,7 +106,7 @@ MongoSourceClient
 |------|-------------|
 | JDK | 1.8+ |
 | mongodb-driver-sync | 4.11.1 |
-| kafka-clients | **3.6.2**（Java 8；仅 Kafka 目标） |
+| kafka-clients | **3.6.2**（Java 8；仅 Kafka Sink） |
 | caffeine | **2.9.3**（勿用 3.x） |
 | disruptor | **3.4.4**（勿用 4.x） |
 
@@ -122,7 +122,7 @@ mvn clean install -DskipTests
 | [mongo-transfer-model/README.md](../mongo-transfer-model/README.md) | 传输模型 |
 | [mongo-source-client/README.md](../mongo-source-client/README.md) | Source API |
 | [mongo-sink-client/README.md](../mongo-sink-client/README.md) | Sink API（MongoDB） |
-| [mongo-kafka-sink-client/README.md](../mongo-kafka-sink-client/README.md) | Kafka 目标 / Change Stream 消息 |
+| [mongo-kafka-sink-client/README.md](../mongo-kafka-sink-client/README.md) | Kafka Sink / Change Stream 消息 |
 | [mongo-sync-client/README.md](../mongo-sync-client/README.md) | 同步编排 / SyncMode |
 | [doc/examples/](../doc/examples/) | 配置文件示例（properties） |
 | [doc/oplog/](../doc/oplog/) | Oplog 样例 |

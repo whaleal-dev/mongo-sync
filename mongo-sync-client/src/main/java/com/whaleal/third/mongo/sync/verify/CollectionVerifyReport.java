@@ -10,10 +10,10 @@ import java.util.List;
 public final class CollectionVerifyReport {
 
     private final String sourceNs;
-    private final String targetNs;
+    private final String sinkNs;
     private final long sourceCount;
-    private final long targetCount;
-    private final long missingOnTarget;
+    private final long sinkCount;
+    private final long missingOnSink;
     private final long missingOnSource;
     private final long contentMismatch;
     private final long compared;
@@ -21,27 +21,27 @@ public final class CollectionVerifyReport {
     private final boolean passed;
 
     public CollectionVerifyReport(String sourceNs,
-                                  String targetNs,
+                                  String sinkNs,
                                   long sourceCount,
-                                  long targetCount,
-                                  long missingOnTarget,
+                                  long sinkCount,
+                                  long missingOnSink,
                                   long missingOnSource,
                                   long contentMismatch,
                                   long compared,
                                   List<String> samples) {
         this.sourceNs = sourceNs;
-        this.targetNs = targetNs;
+        this.sinkNs = sinkNs;
         this.sourceCount = sourceCount;
-        this.targetCount = targetCount;
-        this.missingOnTarget = missingOnTarget;
+        this.sinkCount = sinkCount;
+        this.missingOnSink = missingOnSink;
         this.missingOnSource = missingOnSource;
         this.contentMismatch = contentMismatch;
         this.compared = compared;
         this.samples = samples == null
                 ? Collections.<String>emptyList()
                 : Collections.unmodifiableList(new ArrayList<String>(samples));
-        this.passed = sourceCount == targetCount
-                && missingOnTarget == 0
+        this.passed = sourceCount == sinkCount
+                && missingOnSink == 0
                 && missingOnSource == 0
                 && contentMismatch == 0;
     }
@@ -50,20 +50,20 @@ public final class CollectionVerifyReport {
         return sourceNs;
     }
 
-    public String getTargetNs() {
-        return targetNs;
+    public String getSinkNs() {
+        return sinkNs;
     }
 
     public long getSourceCount() {
         return sourceCount;
     }
 
-    public long getTargetCount() {
-        return targetCount;
+    public long getSinkCount() {
+        return sinkCount;
     }
 
-    public long getMissingOnTarget() {
-        return missingOnTarget;
+    public long getMissingOnSink() {
+        return missingOnSink;
     }
 
     public long getMissingOnSource() {
@@ -90,9 +90,9 @@ public final class CollectionVerifyReport {
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append(passed ? "PASS" : "FAIL");
-        sb.append(" ").append(sourceNs).append(" -> ").append(targetNs);
-        sb.append(" count=").append(sourceCount).append("/").append(targetCount);
-        sb.append(" missingTarget=").append(missingOnTarget);
+        sb.append(" ").append(sourceNs).append(" -> ").append(sinkNs);
+        sb.append(" count=").append(sourceCount).append("/").append(sinkCount);
+        sb.append(" missingSink=").append(missingOnSink);
         sb.append(" missingSource=").append(missingOnSource);
         sb.append(" mismatch=").append(contentMismatch);
         sb.append(" compared=").append(compared);

@@ -12,7 +12,7 @@ import org.bson.BsonString;
 import org.bson.Document;
 
 /**
- * 在目标库执行 DDL。只识别 {@link DdlEvent} / {@link DdlType}。
+ * 在 Sink 库执行 DDL。只识别 {@link DdlEvent} / {@link DdlType}。
  */
 public final class DdlApplier {
 

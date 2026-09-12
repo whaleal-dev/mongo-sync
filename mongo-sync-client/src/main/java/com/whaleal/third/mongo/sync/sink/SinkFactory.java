@@ -5,27 +5,27 @@ import com.whaleal.third.mongo.sink.kafka.config.KafkaOutputFormat;
 import com.whaleal.third.mongo.sink.kafka.sdk.KafkaSinkClient;
 import com.whaleal.third.mongo.sink.sdk.MongoSinkClient;
 import com.whaleal.third.mongo.sync.config.MongoSyncConfig;
-import com.whaleal.third.mongo.sync.config.TargetType;
+import com.whaleal.third.mongo.sync.config.SinkType;
 import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
 import com.whaleal.third.mongo.transfer.spi.TransferSink;
 
 /**
- * 按 {@link TargetType} 创建目标 Sink。
+ * 按 {@link SinkType} 创建 Sink。
  */
-public final class TargetSinkFactory {
+public final class SinkFactory {
 
-    private TargetSinkFactory() {
+    private SinkFactory() {
     }
 
     public static TransferSink create(MongoSyncConfig config,
-                                      MongoClient targetMongoClient,
+                                      MongoClient sinkMongoClient,
                                       boolean orderedWrite) {
-        if (config.getTargetType() == TargetType.KAFKA) {
+        if (config.getSinkType() == SinkType.KAFKA) {
             return KafkaSinkClient.builder()
-                    .bootstrapServers(config.getTargetUri())
-                    .database(config.getTargetDatabase())
-                    .collection(config.getTargetCollection())
+                    .bootstrapServers(config.getSinkUri())
+                    .database(config.getSinkDatabase())
+                    .collection(config.getSinkCollection())
                     .topic(config.getKafkaTopic())
                     .topicPrefix(config.getKafkaTopicPrefix())
                     .topicSeparator(config.getKafkaTopicSeparator())
@@ -42,14 +42,14 @@ public final class TargetSinkFactory {
                     .build();
         }
         MongoSinkClient mongo = MongoSinkClient.builder()
-                .mongoClient(targetMongoClient)
+                .mongoClient(sinkMongoClient)
                 .closeMongoClientOnClose(false)
-                .database(config.getTargetDatabase())
-                .collection(config.getTargetCollection())
+                .database(config.getSinkDatabase())
+                .collection(config.getSinkCollection())
                 .writeMode(config.getWriteMode())
                 .onConflict(config.getOnConflict())
-                .batchSize(config.getTargetBatchSize())
-                .writerThreads(config.getTargetWriterThreads())
+                .batchSize(config.getSinkBatchSize())
+                .writerThreads(config.getSinkWriterThreads())
                 .ordered(orderedWrite)
                 .build();
         return new MongoSinkAdapter(mongo);

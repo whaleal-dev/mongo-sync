@@ -21,8 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 文档库同步配置：统一用 source / target 表示两端。
- * 目标形态见 {@link TargetType}：MongoDB（默认）或 Kafka。
+ * 文档库同步配置：统一用 source / sink 表示两端。
+ * Sink 形态见 {@link SinkType}：MongoDB（默认）或 Kafka。
  */
 public class MongoSyncConfig {
 
@@ -34,16 +34,16 @@ public class MongoSyncConfig {
     public static final long DEFAULT_COMMIT_MAX_LAG_MS = 10_000L;
 
     private String sourceUri;
-    private String targetUri;
+    private String sinkUri;
     private MongoClient sourceMongoClient;
-    private MongoClient targetMongoClient;
+    private MongoClient sinkMongoClient;
     private boolean closeSourceClientOnStop = true;
-    private boolean closeTargetClientOnClose = true;
+    private boolean closeSinkClientOnClose = true;
 
     private String sourceDatabase;
     private String sourceCollection;
-    private String targetDatabase;
-    private String targetCollection;
+    private String sinkDatabase;
+    private String sinkCollection;
 
     /** 默认 AUTO：按源端 standalone / replicaSet / sharding 自动匹配读任务。 */
     private CaptureMode captureMode = CaptureMode.AUTO;
@@ -59,8 +59,8 @@ public class MongoSyncConfig {
 
     private WriteMode writeMode = WriteMode.UPSERT;
     private OnConflict onConflict = OnConflict.FAIL;
-    private int targetBatchSize = 1000;
-    private int targetWriterThreads = MongoSinkConfig.DEFAULT_WRITER_THREADS;
+    private int sinkBatchSize = 1000;
+    private int sinkWriterThreads = MongoSinkConfig.DEFAULT_WRITER_THREADS;
 
     private int bucketNum = DEFAULT_BUCKET_NUM;
     private int bucketQueueCapacity = DEFAULT_BUCKET_QUEUE_CAPACITY;
@@ -69,9 +69,9 @@ public class MongoSyncConfig {
     private boolean forceSingleBucketOnUniqueIndex = true;
     private com.whaleal.third.mongo.sync.spi.SyncWriteErrorHandler writeErrorHandler;
 
-    /** 启动时从源端拉取集合定义并在目标创建表，默认开启。 */
+    /** 启动时从源端拉取集合定义并在 Sink 端创建表，默认开启。 */
     private boolean bootstrapCollection = true;
-    /** 启动时是否在目标创建源端非 _id 索引，默认开启。 */
+    /** 启动时是否在 Sink 端创建源端非 _id 索引，默认开启。 */
     private boolean bootstrapIndexes = true;
     /** 建索引时是否跳过 TTL（expireAfterSeconds），默认 true（对齐 d2t）。 */
     private boolean skipTtlIndexes = true;
@@ -97,8 +97,8 @@ public class MongoSyncConfig {
     /** 允许 commit 的最大增量滞后（毫秒）；仅含增量模式生效。 */
     private long commitMaxLagMs = DEFAULT_COMMIT_MAX_LAG_MS;
 
-    /** 目标形态，默认 MongoDB。 */
-    private TargetType targetType = TargetType.MONGODB;
+    /** Sink 形态，默认 MongoDB。 */
+    private SinkType sinkType = SinkType.MONGODB;
     private String kafkaTopic;
     private String kafkaTopicPrefix = "";
     private String kafkaTopicSeparator = KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR;
@@ -119,24 +119,24 @@ public class MongoSyncConfig {
         return sourceUri;
     }
 
-    public String getTargetUri() {
-        return targetUri;
+    public String getSinkUri() {
+        return sinkUri;
     }
 
     public MongoClient getSourceMongoClient() {
         return sourceMongoClient;
     }
 
-    public MongoClient getTargetMongoClient() {
-        return targetMongoClient;
+    public MongoClient getSinkMongoClient() {
+        return sinkMongoClient;
     }
 
     public boolean isCloseSourceClientOnStop() {
         return closeSourceClientOnStop;
     }
 
-    public boolean isCloseTargetClientOnClose() {
-        return closeTargetClientOnClose;
+    public boolean isCloseSinkClientOnClose() {
+        return closeSinkClientOnClose;
     }
 
     public String getSourceDatabase() {
@@ -147,12 +147,12 @@ public class MongoSyncConfig {
         return sourceCollection;
     }
 
-    public String getTargetDatabase() {
-        return targetDatabase;
+    public String getSinkDatabase() {
+        return sinkDatabase;
     }
 
-    public String getTargetCollection() {
-        return targetCollection;
+    public String getSinkCollection() {
+        return sinkCollection;
     }
 
     public CaptureMode getCaptureMode() {
@@ -203,12 +203,12 @@ public class MongoSyncConfig {
         return onConflict;
     }
 
-    public int getTargetBatchSize() {
-        return targetBatchSize;
+    public int getSinkBatchSize() {
+        return sinkBatchSize;
     }
 
-    public int getTargetWriterThreads() {
-        return targetWriterThreads;
+    public int getSinkWriterThreads() {
+        return sinkWriterThreads;
     }
 
     public int getBucketNum() {
@@ -275,8 +275,8 @@ public class MongoSyncConfig {
         return commitMaxLagMs;
     }
 
-    public TargetType getTargetType() {
-        return targetType == null ? TargetType.MONGODB : targetType;
+    public SinkType getSinkType() {
+        return sinkType == null ? SinkType.MONGODB : sinkType;
     }
 
     public String getKafkaTopic() {
@@ -343,8 +343,8 @@ public class MongoSyncConfig {
             return this;
         }
 
-        public Builder targetUri(String targetUri) {
-            c.targetUri = targetUri;
+        public Builder sinkUri(String sinkUri) {
+            c.sinkUri = sinkUri;
             return this;
         }
 
@@ -354,9 +354,9 @@ public class MongoSyncConfig {
             return this;
         }
 
-        public Builder targetMongoClient(MongoClient targetMongoClient) {
-            c.targetMongoClient = targetMongoClient;
-            c.closeTargetClientOnClose = false;
+        public Builder sinkMongoClient(MongoClient sinkMongoClient) {
+            c.sinkMongoClient = sinkMongoClient;
+            c.closeSinkClientOnClose = false;
             return this;
         }
 
@@ -365,8 +365,8 @@ public class MongoSyncConfig {
             return this;
         }
 
-        public Builder closeTargetClientOnClose(boolean close) {
-            c.closeTargetClientOnClose = close;
+        public Builder closeSinkClientOnClose(boolean close) {
+            c.closeSinkClientOnClose = close;
             return this;
         }
 
@@ -380,22 +380,22 @@ public class MongoSyncConfig {
             return this;
         }
 
-        public Builder targetDatabase(String targetDatabase) {
-            c.targetDatabase = targetDatabase;
+        public Builder sinkDatabase(String sinkDatabase) {
+            c.sinkDatabase = sinkDatabase;
             return this;
         }
 
-        public Builder targetCollection(String targetCollection) {
-            c.targetCollection = targetCollection;
+        public Builder sinkCollection(String sinkCollection) {
+            c.sinkCollection = sinkCollection;
             return this;
         }
 
-        /** 同源同名映射到目标。 */
+        /** 同源同名映射到 Sink。 */
         public Builder mapCollection(String database, String collection) {
             c.sourceDatabase = database;
             c.sourceCollection = collection;
-            c.targetDatabase = database;
-            c.targetCollection = collection;
+            c.sinkDatabase = database;
+            c.sinkCollection = collection;
             return this;
         }
 
@@ -472,19 +472,19 @@ public class MongoSyncConfig {
             return this;
         }
 
-        /** 目标端 bulk 批量大小（写入 MongoSinkClient）。 */
-        public Builder targetBatchSize(int targetBatchSize) {
-            c.targetBatchSize = targetBatchSize > 0 ? targetBatchSize : 1000;
+        /** Sink 端 bulk 批量大小（写入 MongoSinkClient）。 */
+        public Builder sinkBatchSize(int sinkBatchSize) {
+            c.sinkBatchSize = sinkBatchSize > 0 ? sinkBatchSize : 1000;
             return this;
         }
 
         /**
-         * 目标端写线程数，默认 {@link MongoSinkConfig#DEFAULT_WRITER_THREADS}（8）。
+         * Sink 端写线程数，默认 {@link MongoSinkConfig#DEFAULT_WRITER_THREADS}（8）。
          * 不同 ns 可并发写入；同 ns 同 _id 由分桶 Disruptor + flush 保序。
          */
-        public Builder targetWriterThreads(int targetWriterThreads) {
-            c.targetWriterThreads = targetWriterThreads > 0
-                    ? targetWriterThreads
+        public Builder sinkWriterThreads(int sinkWriterThreads) {
+            c.sinkWriterThreads = sinkWriterThreads > 0
+                    ? sinkWriterThreads
                     : MongoSinkConfig.DEFAULT_WRITER_THREADS;
             return this;
         }
@@ -523,7 +523,7 @@ public class MongoSyncConfig {
         }
 
         /**
-         * 同步开始前是否从源端获取集合定义并在目标创建集合/视图。默认 {@code true}。
+         * 同步开始前是否从源端获取集合定义并在 Sink 端创建集合/视图。默认 {@code true}。
          * 索引创建由 {@link #bootstrapIndexes(boolean)} 单独控制。
          */
         public Builder bootstrapCollection(boolean bootstrapCollection) {
@@ -532,8 +532,8 @@ public class MongoSyncConfig {
         }
 
         /**
-         * 同步开始前是否在目标创建源端非 {@code _id_} 索引。默认 {@code true}。
-         * 需目标集合已存在，或同时开启 {@link #bootstrapCollection(boolean)}。
+         * 同步开始前是否在 Sink 端创建源端非 {@code _id_} 索引。默认 {@code true}。
+         * 需 Sink 集合已存在，或同时开启 {@link #bootstrapCollection(boolean)}。
          */
         public Builder bootstrapIndexes(boolean bootstrapIndexes) {
             c.bootstrapIndexes = bootstrapIndexes;
@@ -605,12 +605,12 @@ public class MongoSyncConfig {
             return this;
         }
 
-        public Builder targetType(TargetType targetType) {
-            c.targetType = targetType == null ? TargetType.MONGODB : targetType;
+        public Builder sinkType(SinkType sinkType) {
+            c.sinkType = sinkType == null ? SinkType.MONGODB : sinkType;
             return this;
         }
 
-        /** 固定 Kafka topic；不设则按 prefix + targetDb + sep + targetColl 拼接（对齐 mongo-kafka）。 */
+        /** 固定 Kafka topic；不设则按 prefix + sinkDb + sep + sinkColl 拼接（对齐 mongo-kafka）。 */
         public Builder kafkaTopic(String kafkaTopic) {
             c.kafkaTopic = kafkaTopic;
             return this;
@@ -682,27 +682,27 @@ public class MongoSyncConfig {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "sourceUri or sourceMongoClient is required");
             }
-            TargetType type = c.targetType == null ? TargetType.MONGODB : c.targetType;
-            if (type == TargetType.KAFKA) {
-                if (c.targetUri == null || c.targetUri.trim().isEmpty()) {
+            SinkType type = c.sinkType == null ? SinkType.MONGODB : c.sinkType;
+            if (type == SinkType.KAFKA) {
+                if (c.sinkUri == null || c.sinkUri.trim().isEmpty()) {
                     throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
-                            "targetUri (Kafka bootstrap servers) is required when targetType=KAFKA");
+                            "sinkUri (Kafka bootstrap servers) is required when sinkType=KAFKA");
                 }
-                if (c.targetMongoClient != null) {
+                if (c.sinkMongoClient != null) {
                     throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                            "targetMongoClient is not used when targetType=KAFKA");
+                            "sinkMongoClient is not used when sinkType=KAFKA");
                 }
-            } else if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
+            } else if (c.sinkMongoClient == null && (c.sinkUri == null || c.sinkUri.trim().isEmpty())) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
-                        "targetUri or targetMongoClient is required");
+                        "sinkUri or sinkMongoClient is required");
             }
             if (blank(c.sourceDatabase) || blank(c.sourceCollection)) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "source database/collection is required");
             }
-            if (blank(c.targetDatabase) || blank(c.targetCollection)) {
+            if (blank(c.sinkDatabase) || blank(c.sinkCollection)) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
-                        "target database/collection is required");
+                        "sink database/collection is required");
             }
             return c;
         }

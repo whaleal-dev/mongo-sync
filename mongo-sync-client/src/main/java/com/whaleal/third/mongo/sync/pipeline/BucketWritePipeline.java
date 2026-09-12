@@ -189,7 +189,7 @@ public final class BucketWritePipeline implements AutoCloseable {
                 sink.setOrdered(false);
                 break;
             case RENAME_COLLECTION:
-                // 目标端已在 Sink retarget；源监视名仍固定。唯一索引缓存按源旧 ns 清掉，避免误用。
+                // Sink 端已在 Sink retarget；源监视名仍固定。唯一索引缓存按源旧 ns 清掉，避免误用。
                 caches.putUniqueIndex(sourceNs, false);
                 sink.setOrdered(false);
                 break;

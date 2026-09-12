@@ -26,9 +26,9 @@ import java.util.Map;
 public final class MongoMultiSyncConfig {
 
     private String sourceUri;
-    private String targetUri;
+    private String sinkUri;
     private MongoClient sourceMongoClient;
-    private MongoClient targetMongoClient;
+    private MongoClient sinkMongoClient;
 
     private String namespaceWhite;
     private String namespaceBlack;
@@ -43,8 +43,8 @@ public final class MongoMultiSyncConfig {
 
     private WriteMode writeMode = WriteMode.UPSERT;
     private OnConflict onConflict = OnConflict.FAIL;
-    private int targetBatchSize = 1000;
-    private int targetWriterThreads = MongoSinkConfig.DEFAULT_WRITER_THREADS;
+    private int sinkBatchSize = 1000;
+    private int sinkWriterThreads = MongoSinkConfig.DEFAULT_WRITER_THREADS;
 
     private int bucketNum = MongoSyncConfig.DEFAULT_BUCKET_NUM;
     private int bucketQueueCapacity = MongoSyncConfig.DEFAULT_BUCKET_QUEUE_CAPACITY;
@@ -67,7 +67,7 @@ public final class MongoMultiSyncConfig {
 
     private long commitMaxLagMs = MongoSyncConfig.DEFAULT_COMMIT_MAX_LAG_MS;
 
-    private TargetType targetType = TargetType.MONGODB;
+    private SinkType sinkType = SinkType.MONGODB;
     private String kafkaTopic;
     private String kafkaTopicPrefix = "";
     private String kafkaTopicSeparator = KafkaSinkConfig.DEFAULT_TOPIC_SEPARATOR;
@@ -88,16 +88,16 @@ public final class MongoMultiSyncConfig {
         return sourceUri;
     }
 
-    public String getTargetUri() {
-        return targetUri;
+    public String getSinkUri() {
+        return sinkUri;
     }
 
     public MongoClient getSourceMongoClient() {
         return sourceMongoClient;
     }
 
-    public MongoClient getTargetMongoClient() {
-        return targetMongoClient;
+    public MongoClient getSinkMongoClient() {
+        return sinkMongoClient;
     }
 
     public String getNamespaceWhite() {
@@ -144,12 +144,12 @@ public final class MongoMultiSyncConfig {
         return onConflict;
     }
 
-    public int getTargetBatchSize() {
-        return targetBatchSize;
+    public int getSinkBatchSize() {
+        return sinkBatchSize;
     }
 
-    public int getTargetWriterThreads() {
-        return targetWriterThreads;
+    public int getSinkWriterThreads() {
+        return sinkWriterThreads;
     }
 
     public int getBucketNum() {
@@ -212,8 +212,8 @@ public final class MongoMultiSyncConfig {
         return commitMaxLagMs;
     }
 
-    public TargetType getTargetType() {
-        return targetType == null ? TargetType.MONGODB : targetType;
+    public SinkType getSinkType() {
+        return sinkType == null ? SinkType.MONGODB : sinkType;
     }
 
     public String getKafkaTopic() {
@@ -284,8 +284,8 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
-        public Builder targetUri(String targetUri) {
-            c.targetUri = targetUri;
+        public Builder sinkUri(String sinkUri) {
+            c.sinkUri = sinkUri;
             return this;
         }
 
@@ -294,8 +294,8 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
-        public Builder targetMongoClient(MongoClient client) {
-            c.targetMongoClient = client;
+        public Builder sinkMongoClient(MongoClient client) {
+            c.sinkMongoClient = client;
             return this;
         }
 
@@ -361,14 +361,14 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
-        public Builder targetBatchSize(int targetBatchSize) {
-            c.targetBatchSize = targetBatchSize > 0 ? targetBatchSize : 1000;
+        public Builder sinkBatchSize(int sinkBatchSize) {
+            c.sinkBatchSize = sinkBatchSize > 0 ? sinkBatchSize : 1000;
             return this;
         }
 
-        public Builder targetWriterThreads(int targetWriterThreads) {
-            c.targetWriterThreads = targetWriterThreads > 0
-                    ? targetWriterThreads
+        public Builder sinkWriterThreads(int sinkWriterThreads) {
+            c.sinkWriterThreads = sinkWriterThreads > 0
+                    ? sinkWriterThreads
                     : MongoSinkConfig.DEFAULT_WRITER_THREADS;
             return this;
         }
@@ -460,8 +460,8 @@ public final class MongoMultiSyncConfig {
             return this;
         }
 
-        public Builder targetType(TargetType targetType) {
-            c.targetType = targetType == null ? TargetType.MONGODB : targetType;
+        public Builder sinkType(SinkType sinkType) {
+            c.sinkType = sinkType == null ? SinkType.MONGODB : sinkType;
             return this;
         }
 
@@ -536,19 +536,19 @@ public final class MongoMultiSyncConfig {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
                         "sourceUri or sourceMongoClient is required");
             }
-            TargetType type = c.targetType == null ? TargetType.MONGODB : c.targetType;
-            if (type == TargetType.KAFKA) {
-                if (c.targetUri == null || c.targetUri.trim().isEmpty()) {
+            SinkType type = c.sinkType == null ? SinkType.MONGODB : c.sinkType;
+            if (type == SinkType.KAFKA) {
+                if (c.sinkUri == null || c.sinkUri.trim().isEmpty()) {
                     throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
-                            "targetUri (Kafka bootstrap servers) is required when targetType=KAFKA");
+                            "sinkUri (Kafka bootstrap servers) is required when sinkType=KAFKA");
                 }
-                if (c.targetMongoClient != null) {
+                if (c.sinkMongoClient != null) {
                     throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                            "targetMongoClient is not used when targetType=KAFKA");
+                            "sinkMongoClient is not used when sinkType=KAFKA");
                 }
-            } else if (c.targetMongoClient == null && (c.targetUri == null || c.targetUri.trim().isEmpty())) {
+            } else if (c.sinkMongoClient == null && (c.sinkUri == null || c.sinkUri.trim().isEmpty())) {
                 throw new MongoSyncException(MongoSyncErrorCode.CONFIG_REQUIRED,
-                        "targetUri or targetMongoClient is required");
+                        "sinkUri or sinkMongoClient is required");
             }
             c.namespaceFilter();
             c.namespaceMapper();

@@ -1,6 +1,6 @@
 # mongo-kafka-sink-client
 
-mongo-sync 的 **Kafka 目标**实现：把 `TransferEvent` / `DdlEvent` 写成
+mongo-sync 的 **Kafka Sink**实现：把 `TransferEvent` / `DdlEvent` 写成
 [mongo-kafka](https://www.mongodb.com/docs/kafka-connector/current/) Source 兼容的 **Change Stream** 消息。
 
 下游可用 mongo-kafka Sink 的 `ChangeStreamHandler` 再写入另一套 MongoDB，或由业务直接消费。
@@ -34,4 +34,4 @@ sink.write(event);
 sink.flushAndWait();
 ```
 
-通常不必直接使用本模块，由 `MongoSyncClient` 在 `targetType=KAFKA` 时装配。
+通常不必直接使用本模块，由 `MongoSyncClient` 在 `sinkType=KAFKA` 时装配。

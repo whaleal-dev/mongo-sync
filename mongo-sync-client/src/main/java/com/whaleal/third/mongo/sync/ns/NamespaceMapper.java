@@ -5,16 +5,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 源 ns → 目标 ns 映射（对齐 MongoShake {@code transform.namespace}）。
+ * 源 ns → Sink ns 映射（对齐 MongoShake {@code transform.namespace}）。
  * <p>
  * 映射键值均为 {@code db.collection}；未命中时默认同源同名。
  */
 public final class NamespaceMapper {
 
-    private final Map<String, String> sourceToTarget;
+    private final Map<String, String> sourceToSink;
 
-    private NamespaceMapper(Map<String, String> sourceToTarget) {
-        this.sourceToTarget = sourceToTarget;
+    private NamespaceMapper(Map<String, String> sourceToSink) {
+        this.sourceToSink = sourceToSink;
     }
 
     public static NamespaceMapper identity() {
@@ -52,42 +52,42 @@ public final class NamespaceMapper {
 
     public NsPair map(String sourceDatabase, String sourceCollection) {
         String sourceNs = sourceDatabase + "." + sourceCollection;
-        String targetNs = sourceToTarget.get(sourceNs);
-        if (targetNs == null) {
+        String sinkNs = sourceToSink.get(sourceNs);
+        if (sinkNs == null) {
             return new NsPair(sourceDatabase, sourceCollection, sourceDatabase, sourceCollection);
         }
-        int dot = targetNs.indexOf('.');
+        int dot = sinkNs.indexOf('.');
         return new NsPair(
                 sourceDatabase,
                 sourceCollection,
-                targetNs.substring(0, dot),
-                targetNs.substring(dot + 1));
+                sinkNs.substring(0, dot),
+                sinkNs.substring(dot + 1));
     }
 
     public Map<String, String> asMap() {
-        return sourceToTarget;
+        return sourceToSink;
     }
 
     public static final class NsPair {
         public final String sourceDatabase;
         public final String sourceCollection;
-        public final String targetDatabase;
-        public final String targetCollection;
+        public final String sinkDatabase;
+        public final String sinkCollection;
 
         public NsPair(String sourceDatabase, String sourceCollection,
-                      String targetDatabase, String targetCollection) {
+                      String sinkDatabase, String sinkCollection) {
             this.sourceDatabase = sourceDatabase;
             this.sourceCollection = sourceCollection;
-            this.targetDatabase = targetDatabase;
-            this.targetCollection = targetCollection;
+            this.sinkDatabase = sinkDatabase;
+            this.sinkCollection = sinkCollection;
         }
 
         public String sourceNs() {
             return sourceDatabase + "." + sourceCollection;
         }
 
-        public String targetNs() {
-            return targetDatabase + "." + targetCollection;
+        public String sinkNs() {
+            return sinkDatabase + "." + sinkCollection;
         }
     }
 }

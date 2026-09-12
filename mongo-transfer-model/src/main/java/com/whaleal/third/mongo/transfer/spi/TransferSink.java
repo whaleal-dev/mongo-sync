@@ -4,9 +4,9 @@ import com.whaleal.third.mongo.transfer.model.DdlEvent;
 import com.whaleal.third.mongo.transfer.model.TransferEvent;
 
 /**
- * 目标端写入 SPI：只识别 {@link TransferEvent} / {@link DdlEvent}，不关心上游捕获协议。
+ * Sink 端写入 SPI：只识别 {@link TransferEvent} / {@link DdlEvent}，不关心上游捕获协议。
  * <p>
- * MongoDB 与 Kafka 等目标形态各自实现本接口，Sync 编排层只依赖本契约。
+ * MongoDB 与 Kafka 等 Sink 形态各自实现本接口，Sync 编排层只依赖本契约。
  */
 public interface TransferSink extends AutoCloseable {
 
@@ -18,7 +18,7 @@ public interface TransferSink extends AutoCloseable {
     long write(TransferEvent event);
 
     /**
-     * 已确认落地的最大写入序号：所有 {@code seq <= landedThrough()} 的写入都已在目标端生效。
+     * 已确认落地的最大写入序号：所有 {@code seq <= landedThrough()} 的写入都已在 Sink 端生效。
      */
     long landedThrough();
 
