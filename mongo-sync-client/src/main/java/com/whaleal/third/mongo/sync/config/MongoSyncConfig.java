@@ -426,7 +426,7 @@ public class MongoSyncConfig {
 
         /**
          * 同步模式：{@link SyncMode#FULL} / {@link SyncMode#FULL_AND_INCREMENTAL} /
-         * {@link SyncMode#FULL_AND_CATCH_UP} / {@link SyncMode#INCREMENTAL}。
+         * {@link SyncMode#FULL_THEN_CATCH_UP} / {@link SyncMode#INCREMENTAL}。
          */
         public Builder syncMode(SyncMode syncMode) {
             c.syncMode = syncMode == null ? SyncMode.INCREMENTAL : syncMode;
@@ -448,7 +448,7 @@ public class MongoSyncConfig {
             return this;
         }
 
-        /** 增量结束 ts（含）；{@link SyncMode#FULL_AND_CATCH_UP} 也可由全量结束自动填写。 */
+        /** 增量结束 ts（含）；{@link SyncMode#FULL_THEN_CATCH_UP} 也可由全量结束自动填写。 */
         public Builder oplogEndTimestamp(BsonTimestamp oplogEndTimestamp) {
             c.oplogEndTimestamp = oplogEndTimestamp;
             return this;

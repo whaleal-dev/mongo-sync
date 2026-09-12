@@ -42,14 +42,16 @@ Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。Sink 可�
 |------|------|
 | `FULL` | 仅全量，结束后停止 |
 | `FULL_AND_INCREMENTAL` | **全量∥增量**：先记位点，增量与快照并行；全量结束后持续增量 |
-| `FULL_AND_CATCH_UP` | **全量∥增量**：同上；全量结束后设上界，追平后停止 |
+| `FULL_THEN_CATCH_UP` | **先全量再增量**：全量结束后设上界，追平后停止 |
 | `INCREMENTAL` | 仅增量（可用 `oplogStartTimestamp` / `oplogEndTimestamp` 限窗） |
 
 ```java
 .syncMode(SyncMode.FULL_AND_INCREMENTAL)
 ```
 
-## 全量 ∥ 增量衔接
+## 全量与增量衔接
+
+### `FULL_AND_INCREMENTAL`（并行）
 
 ```text
 beforeInitialSync：记录 start（oplog ts / clusterTime），清旧 ResumeToken
@@ -60,17 +62,30 @@ beforeInitialSync：记录 start（oplog ts / clusterTime），清旧 ResumeToke
                               │
                               ▼
                     onInitialSyncCompleted
-                    （CATCH_UP：写入 end 上界）
-                              │
-                              ▼
-                    tryDrainAndFlush（尽力排空，不因并行增量超时失败）
+                    tryDrainAndFlush（并行下不强求 inflight=0）
 ```
 
-- 快照窗口内变更由并行增量覆盖；与 `op=r` 重复靠 **UPSERT**  
-- 并行期间**禁止回拨位点**（避免覆盖增量已推进的 offset/token）  
-- `FULL_AND_CATCH_UP`：上界在全量结束后写入；增量动态感知上界并追平后停  
-- 增量识别到本表 `DROP_COLLECTION` / `RENAME_COLLECTION` / 本库 `DROP_DATABASE`：源端全量扫描**视为完成**并退出，仍走 `onInitialSyncCompleted` / barrier  
-- 过程中元信息：`CREATE/DROP_INDEXES` 后重探唯一索引并调整分桶/ordered；`RENAME` 后 Sink 写集合跟随改名（源监视名不自动跟随，ChangeStream 通常随后 invalidate）  
+- 快照窗口内变更由并行增量覆盖；与 `op=r` 重复靠 **UPSERT**
+- 并行期间**禁止回拨位点**（避免覆盖增量已推进的 offset/token）
+
+### `FULL_THEN_CATCH_UP`（串行）
+
+```text
+beforeInitialSync：记录 start
+        │
+        ▼
+全量扫描 op=r
+        │
+        ▼
+onInitialSyncCompleted：写入 end 上界
+        │
+        ▼
+增量从 start 追到 end，追平后停止
+```
+
+- 全量结束后才开增量；窗口内重复靠 **UPSERT**
+- 增量识别到本表 `DROP_COLLECTION` / `RENAME_COLLECTION` / 本库 `DROP_DATABASE`：源端全量扫描**视为完成**并退出，仍走 `onInitialSyncCompleted` / barrier
+- 过程中元信息：`CREATE/DROP_INDEXES` 后重探唯一索引并调整分桶/ordered；`RENAME` 后 Sink 写集合跟随改名（源监视名不自动跟随，ChangeStream 通常随后 invalidate）
 
 ## 并发注意
 
@@ -236,7 +251,7 @@ MongoSyncClient.create(MongoSyncClient.builder()
 ## 能力边界
 
 - ✅ **Java 8+**（Caffeine 2.9.3 / Disruptor 3.4.4）
-- ✅ 单集合：`SyncMode` 四模式（全量∥增量并行）+ DDL
+- ✅ 单集合：`SyncMode` 四模式（并行持续增量 / 串行追平）+ DDL
 - ✅ 多集合/库级：`MongoMultiSyncClient` + 白/黑名单 + ns 变换
 - ✅ 位点可选文件持久化：`offsetStoreDir`
 - ✅ 分桶有序、幂等 UPSERT；默认 **8** 写线程（不同 ns 可并发）

@@ -162,7 +162,7 @@ public class MongoSourceConfig {
     }
 
     /**
-     * 增量结束位点（含）：用于 {@link SyncMode#FULL_AND_CATCH_UP} 或有界 {@link SyncMode#INCREMENTAL}。
+     * 增量结束位点（含）：用于 {@link SyncMode#FULL_THEN_CATCH_UP} 或有界 {@link SyncMode#INCREMENTAL}。
      */
     public BsonTimestamp getOplogEndTimestamp() {
         return oplogEndTimestamp;
@@ -320,7 +320,7 @@ public class MongoSourceConfig {
 
         /**
          * 同步模式：{@link SyncMode#FULL} / {@link SyncMode#FULL_AND_INCREMENTAL} /
-         * {@link SyncMode#FULL_AND_CATCH_UP} / {@link SyncMode#INCREMENTAL}。
+         * {@link SyncMode#FULL_THEN_CATCH_UP} / {@link SyncMode#INCREMENTAL}。
          */
         public Builder syncMode(SyncMode syncMode) {
             this.syncMode = syncMode == null ? SyncMode.INCREMENTAL : syncMode;

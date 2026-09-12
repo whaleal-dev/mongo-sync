@@ -30,7 +30,7 @@ public class ChangeStreamListener extends AbstractSourceListener {
     /** 全量开始前的 clusterTime，增量用 startAtOperationTime 对齐窗口。 */
     private volatile BsonTimestamp startAtOperationTime;
 
-    /** FULL_AND_CATCH_UP：全量结束后的 clusterTime 上界。 */
+    /** FULL_THEN_CATCH_UP：全量结束后的 clusterTime 上界。 */
     private volatile BsonTimestamp catchUpEndTs;
 
     public ChangeStreamListener(MongoSourceConfig config) {
@@ -45,7 +45,8 @@ public class ChangeStreamListener extends AbstractSourceListener {
     @Override
     protected void beforeInitialSync() {
         ensureConnection();
-        // 快照开始前记下 clusterTime，并清旧 token；随后与全量并行开增量
+        // 快照开始前记下 clusterTime，并清旧 token。
+        // FULL_AND_INCREMENTAL 随后并行开增量；FULL_THEN_CATCH_UP 等全量结束后再开。
         startAtOperationTime = readClusterTime();
         setCaptureAnchor(startAtOperationTime);
         saveResumeToken(ResumeToken.empty(), startAtOperationTime);
@@ -54,7 +55,7 @@ public class ChangeStreamListener extends AbstractSourceListener {
 
     @Override
     protected void onInitialSyncCompleted() {
-        // 并行增量可能已推进 ResumeToken，禁止清空；仅设置追平上界
+        // 追平上界在全量结束后写入；并行模式下增量可能已在跑，禁止回拨 ResumeToken。
         if (config.isCatchUpThenStop()) {
             catchUpEndTs = readClusterTime();
         }
@@ -77,7 +78,7 @@ public class ChangeStreamListener extends AbstractSourceListener {
                 MongoCollection<BsonDocument> collection = database.getCollection(config.getCollection(), BsonDocument.class);
 
                 ChangeStreamIterable<BsonDocument> changeStreamIterable = buildChangeStream(collection, resumeToken);
-                // 并行追平或已有上界时用短 await，便于感知 catchUpEndTs
+                // 已有上界或追平模式用短 await，便于判定是否追平完成
                 if (endTs != null || config.isCatchUpThenStop()) {
                     changeStreamIterable = changeStreamIterable.maxAwaitTime(2L, TimeUnit.SECONDS);
                 }

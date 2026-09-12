@@ -521,7 +521,7 @@ public final class SyncMain {
             return SyncMode.valueOf(get(props, "sync.mode", "FULL_AND_INCREMENTAL").toUpperCase());
         } catch (IllegalArgumentException e) {
             throw new MongoSyncException(MongoSyncErrorCode.CONFIG_INVALID,
-                    "invalid sync.mode, expected FULL|FULL_AND_INCREMENTAL|FULL_AND_CATCH_UP|INCREMENTAL", e);
+                    "invalid sync.mode, expected FULL|FULL_AND_INCREMENTAL|FULL_THEN_CATCH_UP|INCREMENTAL", e);
         }
     }
 

@@ -29,7 +29,7 @@ public class OplogListener extends AbstractSourceListener {
     private volatile BsonTimestamp initialSyncStartTs;
 
     /**
-     * 全量结束后的 oplog ts；{@link com.whaleal.third.mongo.source.config.SyncMode#FULL_AND_CATCH_UP} 用其作窗口终点。
+     * 全量结束后的 oplog ts；{@link com.whaleal.third.mongo.source.config.SyncMode#FULL_THEN_CATCH_UP} 用其作窗口终点。
      */
     private volatile BsonTimestamp catchUpEndTs;
 
@@ -56,7 +56,7 @@ public class OplogListener extends AbstractSourceListener {
 
     @Override
     protected void onInitialSyncCompleted() {
-        // 并行模式下增量已在跑，禁止回拨位点；仅补追平上界
+        // 仅补追平上界；并行模式下增量已在跑，禁止回拨位点。
         if (config.isCatchUpThenStop()) {
             ensureConnection();
             BsonTimestamp end = createFetcher().readLatestTimestamp();

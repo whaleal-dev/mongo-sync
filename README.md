@@ -55,7 +55,7 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 
 ## 核心能力一览
 
-- **四种同步模式**：仅全量、全量∥持续增量、全量∥追平后停、仅增量  
+- **四种同步模式**：仅全量、全量∥持续增量、全量后追平再停、仅增量  
 - **双Sink 形态**：MongoDB（默认）/ Kafka（mongo-kafka Change Stream 消息）  
 - **双捕获通道**：ChangeStream（推荐 / MongoDB 7.0+）；Oplog 3.2–6.0（V1/V2/V3 解析）  
 - **架构自适应**：`capture.mode=AUTO` 按源端拓扑匹配读计划（禁止在 mongos / standalone 上误拉 Oplog）  

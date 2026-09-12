@@ -44,14 +44,14 @@ MongoSourceClient
 |------|------|
 | `FULL` | 仅全量 |
 | `FULL_AND_INCREMENTAL` | **并行**：全量与增量同时跑，全量结束后持续增量 |
-| `FULL_AND_CATCH_UP` | **并行**：同上；全量结束后设上界，追平后停止 |
-| 命名说明 | 用 `AND` 表示并行，不用易误解为串行的 `THEN` |
+| `FULL_THEN_CATCH_UP` | **串行**：先全量，再追增量窗口上界，追平后停止 |
+| 命名说明 | `AND` 表示全量与增量并行并持续；`THEN` 表示先全量、再追平、再停 |
 | 删表/改名提前结束全量 | 增量识别 `DROP` / `RENAME` / `DROP_DATABASE` → 源端全量视为完成 |
 | 索引 DDL 刷新分桶 | `CREATE/DROP_INDEXES` 后重探唯一索引并调整 Sink ordered |
 | rename 后 Sink 跟随 | Sink 执行 rename 后切换写集合句柄 |
 | `INCREMENTAL` | 仅增量 |
 
-衔接要点：增量从全量**开始前**的 oplog ts / `startAtOperationTime` 消费；与快照重复靠 UPSERT；全量结束后 `tryDrainAndFlush`（并行下不强求 inflight=0）。
+衔接要点：增量从全量**开始前**的 oplog ts / `startAtOperationTime` 消费；与快照重复靠 UPSERT。`FULL_AND_INCREMENTAL` 全量结束后 `tryDrainAndFlush`（并行下不强求 inflight=0）；`FULL_THEN_CATCH_UP` 全量结束后再开增量。
 
 **不采用** Reactor / Reactive 重写内核。
 

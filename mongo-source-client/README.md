@@ -24,7 +24,7 @@
 - `fullDocument` 可选（DEFAULT 透传增量 / UPDATE_LOOKUP 回表等）
 - V1 `system.indexes` 建索引归一化为 `createIndexes`
 - V3（5.0/6.0）update `diff` 归一为 `$set/$unset`
-- 位点（ResumeToken / oplog ts）SPI、`SyncMode` 全量∥增量并行、优雅启停
+- 位点（ResumeToken / oplog ts）SPI、`SyncMode` 四模式、优雅启停
 
 ### SyncMode
 
@@ -32,7 +32,7 @@
 |------|------|
 | `FULL` | 仅全量 |
 | `FULL_AND_INCREMENTAL` | 全量与增量**并行**，之后持续增量 |
-| `FULL_AND_CATCH_UP` | 全量与增量**并行**，全量结束后追平上界再停 |
+| `FULL_THEN_CATCH_UP` | 先全量，再追增量窗口上界，追平后停（**串行**） |
 | （并行中删表/改名） | 增量识别本表 `DROP` / `RENAME` / 本库 `dropDatabase` 时，源端全量扫描**视为完成**并退出 |
 | `INCREMENTAL` | 仅增量 |
 
@@ -155,7 +155,7 @@ client.start();
 | `retryMaxTimes(int)` | 最大重试次数 | 可选 | 10 |
 | `retryIntervalMs(long)` | 重试间隔（毫秒） | 可选 | 1000 |
 | `offsetLogIntervalSeconds(int)` | 周期性打印位点到 stderr（秒）；`<=0` 关闭 | 可选 | 30 |
-| `syncMode(SyncMode)` | FULL / FULL_AND_INCREMENTAL / FULL_AND_CATCH_UP / INCREMENTAL | 可选 | INCREMENTAL |
+| `syncMode(SyncMode)` | FULL / FULL_AND_INCREMENTAL / FULL_THEN_CATCH_UP / INCREMENTAL | 可选 | INCREMENTAL |
 | `resumeTokenStorage(ResumeTokenStorage)` | ChangeStream 位点（ResumeToken） | 可选 | null |
 | `oplogOffsetStorage(OplogOffsetStorage)` | Oplog 位点（时间戳） | 可选 | null |
 | `listener(TransferEventListener)` | CRUD 事件回调 | 必填 | - |
@@ -480,7 +480,7 @@ client.start();
 | `pipeline(List<BsonDocument>)` | Custom aggregation filter pipeline | Optional | null |
 | `retryMaxTimes(int)` | Max retry times | Optional | 10 |
 | `retryIntervalMs(long)` | Retry interval (ms) | Optional | 1000 |
-| `syncMode(SyncMode)` | FULL / FULL_AND_INCREMENTAL / FULL_AND_CATCH_UP / INCREMENTAL | Optional | INCREMENTAL |
+| `syncMode(SyncMode)` | FULL / FULL_AND_INCREMENTAL / FULL_THEN_CATCH_UP / INCREMENTAL | Optional | INCREMENTAL |
 | `resumeTokenStorage(ResumeTokenStorage)` | ChangeStream resume token storage | Optional | null |
 | `listener(TransferEventListener)` | Event callback handler | Required | - |
 | `listenerThreadPriority(int)` | Listener thread priority | Optional | NORM_PRIORITY |

@@ -158,13 +158,14 @@ public abstract class AbstractSourceListener implements SourceListener {
     }
 
     /**
-     * 全量 + 增量模式：先定位点，再<strong>并行</strong>跑增量与全量；仅全量/仅增量则串行。
+     * 全量 + 增量：{@link com.whaleal.third.mongo.source.config.SyncMode#parallelFullAndIncremental()} 时并行；
+     * {@link com.whaleal.third.mongo.source.config.SyncMode#catchUpThenStop()} 时先全量再追增量；仅全量/仅增量则串行。
      */
     private void runCapture() throws Exception {
         boolean needFull = config.getSyncMode().includesFull();
         boolean needInc = config.getSyncMode().includesIncremental();
 
-        if (needFull && needInc) {
+        if (needFull && needInc && config.getSyncMode().parallelFullAndIncremental()) {
             beforeInitialSync();
             incrementalExecutor = Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, listenerThreadName() + "-incremental");
@@ -202,7 +203,11 @@ public abstract class AbstractSourceListener implements SourceListener {
             markInitialSyncFinished();
             onInitialSyncCompleted();
             runAfterFullSyncBarrier();
-            running.set(false);
+            if (needInc) {
+                startIncremental();
+            } else {
+                running.set(false);
+            }
             return;
         }
 
@@ -477,7 +482,9 @@ public abstract class AbstractSourceListener implements SourceListener {
     }
 
     /**
-     * 全量快照开始前钩子：记录增量起点（须在启动并行增量之前调用）。
+     * 全量快照开始前钩子：记录增量起点。
+     * {@link com.whaleal.third.mongo.source.config.SyncMode#FULL_AND_INCREMENTAL} 须在启动并行增量之前调用；
+     * {@link com.whaleal.third.mongo.source.config.SyncMode#FULL_THEN_CATCH_UP} 在全量结束后才开增量。
      */
     protected void beforeInitialSync() {
     }
@@ -485,7 +492,9 @@ public abstract class AbstractSourceListener implements SourceListener {
     protected abstract void onInitialSyncCompleted();
 
     /**
-     * 全量扫描结束后的下游屏障（此时增量可能已在并行写入）。
+     * 全量扫描结束后的下游屏障。
+     * {@link com.whaleal.third.mongo.source.config.SyncMode#FULL_AND_INCREMENTAL} 时增量可能已在写；
+     * {@link com.whaleal.third.mongo.source.config.SyncMode#FULL_THEN_CATCH_UP} 时增量尚未启动。
      */
     protected void runAfterFullSyncBarrier() {
         Runnable barrier = config.getAfterFullSyncBarrier();
