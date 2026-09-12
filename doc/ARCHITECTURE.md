@@ -1,6 +1,7 @@
 # 架构与功能审查（Java 8+）
 
-> 审查范围：`mongo-sync` 全模块。目标运行时：**Java 8+**。
+> 审查范围：`mongo-sync` 全模块。目标运行时：**Java 8+**。  
+> 关系型同步（MySQL / Oracle / PostgreSQL）见姊妹仓 [rds-sync](https://github.com/whaleal-dev/rds-sync)；两边编排语义对齐，事件模型独立。
 
 ## 1. 模块架构
 
@@ -22,6 +23,8 @@ mongo-sync/
 | `DdlEvent` | 删库/删表/建删索引/建表/改名 |
 
 Sink **不感知** Oplog 还是 ChangeStream。
+
+与 [rds-sync](https://github.com/whaleal-dev/rds-sync) 的关系：本仓事件是文档 `TransferEvent`；rds-sync 是行级 `RowChange`。两边都可以把 Kafka 当 Sink：本仓是 mongo-kafka Change Stream，rds-sync 是行级 envelope。控制 API 与 SyncMode 同构，但**不要**把两个 SDK 串成一条异构链路（没有官方 Mongo ↔ MySQL 适配器）。
 
 ## 2. 同步链路（mongo-sync-client）
 
@@ -123,6 +126,7 @@ mvn clean install -DskipTests
 | [mongo-sync-client/README.md](../mongo-sync-client/README.md) | 同步编排 / SyncMode |
 | [doc/examples/](../doc/examples/) | 配置文件示例（properties） |
 | [doc/oplog/](../doc/oplog/) | Oplog 样例 |
+| [rds-sync 架构](https://github.com/whaleal-dev/rds-sync/blob/main/docs/ARCHITECTURE.md) | 关系库同步契约（控制面对齐本仓） |
 
 ## 7. 建议后续（按优先级）
 

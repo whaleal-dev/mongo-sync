@@ -38,6 +38,21 @@ Sink **不感知** 捕获协议——无论 Oplog 还是 ChangeStream，统一�
 
 ---
 
+## 和 rds-sync 怎么选
+
+二者是姊妹产品，控制面（`start` / `pauseIncremental` / `canCommit` / `commit`、全量∥增量、分桶有序）对齐，**数据面互不替代**：
+
+| | [mongo-sync](https://github.com/whaleal-dev/mongo-sync)（本仓） | [rds-sync](https://github.com/whaleal-dev/rds-sync) |
+|--|------|---------|
+| 源 | MongoDB（Oplog / ChangeStream） | MySQL / Oracle / PostgreSQL |
+| 目标 | MongoDB、DocumentDB / DDS、Kafka（Change Stream） | MySQL JDBC、Kafka（行级 envelope） |
+| 事件契约 | `TransferEvent` / `DdlEvent` | `RowChange` / `DdlEvent` |
+| 典型场景 | 迁库、灾备、分片升级、投递 Kafka | 异构关系库搬迁、投递 Kafka、国产化转型 |
+
+需要 MySQL / Oracle / PostgreSQL 时请走 **[rds-sync](https://github.com/whaleal-dev/rds-sync)**，不要在本仓找 JDBC 源。
+
+---
+
 ## 核心能力一览
 
 - **四种同步模式**：仅全量、全量∥持续增量、全量∥追平后停、仅增量  
@@ -177,6 +192,10 @@ MongoSyncClient.create(MongoSyncClient.builder()
 
 采用高速数据同步机制，实现 100% 传输带宽利用率，支持可控 CPU 利用率，内存使用率可配置，并支持多表并传，确保同步过程高效稳定。同时支持断点续传功能，避免网络中断导致的数据丢失。
 
+### 要同步 MySQL / Oracle / PostgreSQL 用哪个？
+
+用姊妹产品 [rds-sync](https://github.com/whaleal-dev/rds-sync)。mongo-sync 只做文档库（MongoDB / 协议兼容库 / Kafka 目标）；关系库的全量切分、JDBC 写入和 binlog/redo/WAL 增量在 rds-sync。两边的同步模式与迁移控制 API 故意对齐，便于同一套运维习惯。
+
 ---
 
 ## 文档
@@ -189,6 +208,7 @@ MongoSyncClient.create(MongoSyncClient.builder()
 | [doc/examples/mongo-sync-kafka.example.properties](doc/examples/mongo-sync-kafka.example.properties) | Kafka 目标配置示例 |
 | [doc/examples/mongo-verify.example.properties](doc/examples/mongo-verify.example.properties) | 校验配置示例 |
 | [doc/oplog/](doc/oplog/) | 各版本 Oplog 样例 |
+| [rds-sync](https://github.com/whaleal-dev/rds-sync) | 关系库同步（MySQL / Oracle / PostgreSQL） |
 
 ---
 
@@ -200,6 +220,7 @@ MongoSyncClient.create(MongoSyncClient.builder()
 - **灾备与只读副本**：持续增量同步到备端  
 - **架构升级**：副本集 ↔ 分片、跨版本（捕获通道随版本自动收紧）  
 - **业务内嵌同步**：以 SDK 嵌入现有 Java 服务，统一事件模型  
+- **关系库搬迁**：不在本仓；见 [rds-sync](https://github.com/whaleal-dev/rds-sync) 
 
 > 生产请配置 `offset.store.dir`、注入 `SyncWriteErrorHandler`，切换前用 `verify.sh` 抽检。DocumentDB / DDS 与社区版在部分算子、DDL 上可能有差异，迁云前务必验证。更细限制见 [架构说明](doc/ARCHITECTURE.md)。
 

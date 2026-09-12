@@ -13,6 +13,8 @@ Sink 落地
 
 Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。目标可以是 MongoDB，也可以是 Kafka（`targetType=KAFKA`）。
 
+关系库（MySQL / Oracle / PostgreSQL）的对位编排在 [rds-sync](https://github.com/whaleal-dev/rds-sync)，不要把本模块当 JDBC 同步器用。
+
 ## 对齐 d2t 的设计点
 
 | d2t | 本模块 |
