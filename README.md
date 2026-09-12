@@ -6,7 +6,7 @@
 同构兼容库亦可：Amazon **DocumentDB**、阿里云 **DDS** 等 MongoDB 协议兼容的文档库。  
 **Kafka Sink**：`sink.type=kafka`，把变更写成 mongo-kafka 兼容的 Change Stream 消息，供下游消费或再经 mongo-kafka Sink 落库。
 
-面向迁移、灾备、多活与跨架构搬迁：一套 API / 一条命令，完成 **全量 + 增量**、**DDL 跟随**、**多库表过滤** 与 **数据校验**。设计参考 d2t / MongoShake，并保持可嵌入 Java 业务进程的轻量形态。
+面向迁移、灾备、多活与跨架构搬迁：一套 API / 一条命令，完成 **全量 + 增量**、**DDL 跟随**、**多库表过滤** 与 **数据校验**。可嵌入 Java 业务进程，也可脚本启动。
 
 ```bash
 ./bin/mongosync.sh -f conf/mongo-sync.properties   # 启动同步
@@ -28,7 +28,7 @@
 | 迁库 / 扩容不停服 | 全量∥增量并行（`FULL_AND_INCREMENTAL`），UPSERT 兜底窗口重复 |
 | 跨架构互传 | 自动识别 standalone / 副本集 / 分片，匹配读任务（Oplog / ChangeStream） |
 | 分片集群增量 | mongos 拉全量 + ChangeStream@mongos（MongoDB 3.6+；不再提供多分片 OPLOG） |
-| 大表全量加速 | 按 `_id` 切段多任务并行读（对齐 d2t 拆分思路） |
+| 大表全量加速 | 按 `_id` 切段多任务并行读 |
 | 结构一起走 | 启动预建集合 / 索引；运行中 DDL（删表、改名、建删索引）可落地 |
 | 写序与吞吐 | `_id` 分桶 + LMAX Disruptor 背压；唯一索引自动有序写 |
 | 可嵌入 / 可脚本 | SDK（`MongoSyncClient`）或 `mongosync.sh` 配置文件启动 |
@@ -223,6 +223,12 @@ MongoSyncClient.create(MongoSyncClient.builder()
 - **关系库搬迁**：不在本仓；见 [rds-sync](https://github.com/whaleal-dev/rds-sync) 
 
 > 生产请配置 `offset.store.dir`、注入 `SyncWriteErrorHandler`，切换前用 `verify.sh` 抽检。DocumentDB / DDS 与社区版在部分算子、DDL 上可能有差异，迁云前务必验证。更细限制见 [架构说明](doc/ARCHITECTURE.md)。
+
+---
+
+## 主要贡献者
+
+- [LHP](https://github.com/GitHubLhp123)
 
 ---
 

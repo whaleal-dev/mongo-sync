@@ -10,7 +10,7 @@
 
 - **纯嵌入式 SDK**：零中间件依赖，可直接嵌入业务服务，无需部署 Kafka Connect/Flink
 - **双捕获模式**：ChangeStream（默认）与 Oplog（&lt;7.0），统一输出 `TransferEvent`（op/before/after，对齐 Sink）
-- **版本显式声明**：Oplog 模式须客户端传入 `mongoVersion`，按 V1/V2/V3 解析（对齐 d2t）
+- **版本显式声明**：Oplog 模式须客户端传入 `mongoVersion`，按 V1/V2/V3 解析
 - **DDL 可选出口**：索引/DDL 经 `ddlListener` 回调，未配置则只推进位点
 - **位点**：进程内内存 + 周期心跳日志；**当前不做持久化**
 - **生产级容错**：完善重连、断线自动重试、oplog 窗口丢失检测

@@ -1,6 +1,6 @@
 # mongo-sync-client
 
-文档数据库同步编排模块（参考 **d2t** + **LMAX Disruptor**）：
+文档数据库同步编排模块（LMAX Disruptor 分桶有序写）：
 
 ```text
 Source (Oplog / ChangeStream)
@@ -15,10 +15,10 @@ Sink **只认** `TransferEvent` / `DdlEvent`，不感知捕获协议。Sink 可�
 
 关系库（MySQL / Oracle / PostgreSQL）的对位编排在 [rds-sync](https://github.com/whaleal-dev/rds-sync)，不要把本模块当 JDBC 同步器用。
 
-## 对齐 d2t 的设计点
+## 分桶与有序写
 
-| d2t | 本模块 |
-|-----|--------|
+| 设计点 | 实现 |
+|--------|------|
 | `_id.hashCode % bucketNum` | `IdBucketRouter` |
 | 唯一索引强制 bucket=1 | Caffeine `uniqueIndexCache` → bucket=0；Sink `ordered=true` |
 | 同桶同 `_id` 先 flush | 桶线程 `pendingIds`（`_id`→写入序号）；`landedThrough` 裁剪，有界；重复 `_id` 且前次未落库时 `flushAndWait` |
@@ -218,7 +218,7 @@ MongoSyncClient.create(MongoSyncClient.builder()
 - **锁/元数据缓存**：Caffeine
 - **不再使用** `BlockingQueue` 做分桶传递
 - **位点心跳**：默认每 30s 打印当前位点与上次同步时间（`.offsetLogIntervalSeconds(0)` 关闭）；重试/停机也会打印
-- **全量并行读**（对齐 d2t）：`.fullSyncParallelism(n)`（>1 时按 `_id` 切段并行）；`.fullSyncTaskMbSize(32)` 控制单段体积；`.fullSyncBatchSize` 控制游标 batch
+- **全量并行读**：`.fullSyncParallelism(n)`（>1 时按 `_id` 切段并行）；`.fullSyncTaskMbSize(32)` 控制单段体积；`.fullSyncBatchSize` 控制游标 batch
 - **位点存储**：可选 `.offsetStoreDir(...)` 文件持久化；未配置则为进程内内存
 
 ## Maven

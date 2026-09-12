@@ -12,7 +12,7 @@ mongo-sync/
 ├── mongo-sink-client/      只识别传输模型 → MongoDB 写入 / DDL
 ├── mongo-kafka-sink-client 只识别传输模型 → Kafka（mongo-kafka Change Stream 格式）
 ├── mongo-sync-client/      Source → Disruptor 分桶 + Caffeine 锁 → TransferSink
-└── doc/oplog/              各版本 oplog 样例（自 d2t 拷贝）
+└── doc/oplog/              各版本 oplog 样例
 ```
 
 数据契约：
@@ -78,7 +78,7 @@ MongoSourceClient
 | Kafka Sink（mongo-kafka Change Stream JSON/BSON） | ✅ |
 | 位点文件持久化（`offsetStoreDir`，按 ns） | ✅ |
 | 位点周期心跳日志 | ✅ |
-| 大表全量并行读（`fullSyncParallelism`，对齐 d2t `_id` 切段） | ✅ |
+| 大表全量并行读（`fullSyncParallelism`，按 `_id` 切段） | ✅ |
 | Java 8 编译 | ✅（Caffeine 2.9.3 / Disruptor 3.4.4） |
 
 ## 4. 架构 / 功能漏洞与限制
