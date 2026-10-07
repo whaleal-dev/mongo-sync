@@ -1,0 +1,10 @@
+# 依赖与构建产物
+node_modules/
+build/
+.docusaurus/
+
+# 生成物：由 scripts/sync-docs.mjs 从仓库 doc/ 生成，真源不在这里
+docs/
+static/img/banner.svg
+
+.DS_Store

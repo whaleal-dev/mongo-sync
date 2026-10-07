@@ -1,0 +1,28 @@
+:root {
+  --ifm-color-primary: #128c6e;
+  --ifm-color-primary-dark: #107e63;
+  --ifm-color-primary-darker: #0f775d;
+  --ifm-color-primary-darkest: #0c624c;
+  --ifm-color-primary-light: #14a17e;
+  --ifm-color-primary-lighter: #16a984;
+  --ifm-color-primary-lightest: #2ec49d;
+  --ifm-code-font-size: 95%;
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
+}
+
+.navbar__title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.footer {
+  --ifm-footer-background-color: #0f172a;
+}
+
+/* 手册正文里的表格比较宽（配置项表），给横向滚动兜底 */
+.markdown table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}

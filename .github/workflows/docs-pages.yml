@@ -1,0 +1,83 @@
+# 把 docs-site/ 构建成静态站并发布到 GitHub Pages。
+#
+# 公开地址：https://docs.whaleal.com/mongo-sync/
+# 文档内容真源是仓库的 doc/ —— 构建前由 npm run sync-docs（prebuild 钩子）生成，
+# 本仓库不在 docs-site/ 里另外维护一份文档副本。
+name: Deploy Docs Pages
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "doc/**"
+      - "docs-site/**"
+      - ".github/workflows/docs-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 仓库若尚未启用 Pages，这一步会按 GitHub Actions 方式启用
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "发现 docs-site/package-lock.json，使用 npm ci"
+            npm ci --no-audit --no-fund
+          else
+            echo "暂无 docs-site/package-lock.json，退回 npm install"
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Typecheck docs
+        run: npm run typecheck
+
+      - name: Build docs
+        env:
+          GITHUB_PAGES: "true"
+          DOCS_SITE_URL: https://docs.whaleal.com
+          DOCS_SITE_BASE_URL: /mongo-sync/
+          DOCS_REPO: mongo-sync
+          DOCS_SRC: doc
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/build
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

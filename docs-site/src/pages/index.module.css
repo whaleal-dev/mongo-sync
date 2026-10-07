@@ -1,0 +1,71 @@
+.heroBanner {
+  padding: 3rem 0;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.banner {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto 1.5rem;
+  display: block;
+  border-radius: 10px;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2rem 1rem;
+  }
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.quickRoutes {
+  padding: 3rem 0 4rem;
+}
+
+.quickRoutesIntro {
+  color: var(--ifm-color-emphasis-700);
+  max-width: 720px;
+}
+
+.quickRouteGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.quickRoute {
+  display: block;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.quickRoute:hover {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  text-decoration: none;
+  transform: translateY(-2px);
+}
+
+.quickRoute h3 {
+  margin-bottom: 0.35rem;
+}
+
+.quickRoute p {
+  margin-bottom: 0;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.95rem;
+}
