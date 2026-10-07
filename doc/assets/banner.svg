@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="mongo-sync — MongoDB 文档同步 SDK">
+  <title>mongo-sync — MongoDB 文档同步 SDK</title>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F9D58"/>
+      <stop offset="52%" stop-color="#128C6E"/>
+      <stop offset="100%" stop-color="#2E86C1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="84%" cy="14%" r="58%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shade" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.16"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="300" fill="url(#bg)"/>
+  <rect width="1200" height="300" fill="url(#glow)"/>
+
+  <path fill="#FFFFFF" fill-opacity="0.10"
+        d="M0,242 C150,212 300,268 450,250 C600,232 750,202 900,220 C1030,236 1120,250 1200,238 L1200,300 L0,300 Z"/>
+  <path fill="#FFFFFF" fill-opacity="0.14"
+        d="M0,266 C160,242 320,288 480,272 C640,256 800,230 960,246 C1080,258 1150,270 1200,262 L1200,300 L0,300 Z"/>
+  <rect width="1200" height="300" fill="url(#shade)"/>
+
+  <text x="1160" y="54" text-anchor="end" fill="#FFFFFF" fill-opacity="0.72"
+        font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="17" letter-spacing="0.6">whaleal.com</text>
+
+  <text x="600" y="130" text-anchor="middle" fill="#FFFFFF" font-weight="700" letter-spacing="1.2"
+        font-family="'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+        font-size="72">mongo-sync</text>
+
+  <text x="600" y="182" text-anchor="middle" fill="#EAF7F0"
+        font-family="'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+        font-size="25">MongoDB 文档同步 SDK · 全量 + 增量 · DDL 跟随 · 多库表过滤</text>
+
+  <text x="600" y="220" text-anchor="middle" fill="#CFE9EF"
+        font-family="'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+        font-size="21">ChangeStream / Oplog → MongoDB · DocumentDB · DDS ｜ Kafka Sink</text>
+</svg>

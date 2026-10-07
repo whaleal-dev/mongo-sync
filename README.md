@@ -1,3 +1,16 @@
+<p align="center">
+  <img src="doc/assets/banner.svg" alt="mongo-sync — MongoDB 文档同步 SDK" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Java-8-ED8B00" alt="Java 8" />
+  <img src="https://img.shields.io/badge/MongoDB-3.2%2B-13AA52" alt="MongoDB 3.2+" />
+  <img src="https://img.shields.io/badge/Sink-MongoDB%20%7C%20Kafka-2E86C1" alt="Sink: MongoDB | Kafka" />
+  <img src="https://img.shields.io/badge/verify-COUNT%20%7C%20ID%20%7C%20FULL-0A7EA4" alt="verify: COUNT / ID / FULL" />
+  <a href="https://github.com/whaleal-dev/mongo-sync/stargazers"><img src="https://img.shields.io/github/stars/whaleal-dev/mongo-sync?color=yellow" alt="GitHub stars" /></a>
+  <a href="https://github.com/whaleal-dev/mongo-sync/commits/main"><img src="https://img.shields.io/github/last-commit/whaleal-dev/mongo-sync?label=last%20commit" alt="last commit" /></a>
+</p>
+
 # mongo-sync
 
 **MongoDB 文档同步 SDK / 工具**（Java 8+）
@@ -202,6 +215,7 @@ MongoSyncClient.create(MongoSyncClient.builder()
 
 | 文档 | 说明 |
 |------|------|
+| **[doc/使用手册](doc/README.md)** | **面向接入方与运维的完整手册**：快速开始 / 配置全解 / 同步模式 / SDK 与 HTTP 控制面 / 数据校验 / 运行排障 |
 | [bin/README.md](bin/README.md) | 脚本入口详解 |
 | [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | 架构、能力清单与已知限制 |
 | [doc/examples/mongo-sync.example.properties](doc/examples/mongo-sync.example.properties) | 同步配置示例 |
